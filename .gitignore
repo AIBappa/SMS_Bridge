@@ -17,3 +17,5 @@ docs/Integration.md
 
 #Ignore log
 *.log
+cloudflare_tunnel/credentials-file.json
+cloudflare_tunnel/config.yml
