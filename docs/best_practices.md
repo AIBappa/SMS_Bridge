@@ -150,7 +150,7 @@ kubectl exec -n sms-bridge deployment/redis -- redis-cli -a $REDIS_PASSWORD FLUS
 #### Remove Specific Mobile Numbers from Cache
 ```bash
 # Remove single number from duplicate prevention cache
-MOBILE_NUMBER="9699511296"
+MOBILE_NUMBER="99XXYYZZAA"
 
 # Docker
 docker exec redis redis-cli -a $REDIS_PASSWORD SREM out_sms_numbers $MOBILE_NUMBER
@@ -162,7 +162,7 @@ kubectl exec -n sms-bridge deployment/redis -- redis-cli -a $REDIS_PASSWORD SREM
 #### Bulk Remove Multiple Numbers
 ```bash
 # Remove multiple numbers at once
-MOBILE_NUMBERS="9699511296 9876543210 9123456789"
+MOBILE_NUMBERS="99XXYYZZAA 9876543210 9123456789"
 
 # Docker
 for number in $MOBILE_NUMBERS; do
@@ -178,7 +178,7 @@ done
 #### Add Numbers to Cache Manually
 ```bash
 # Add single number to cache (useful for testing)
-MOBILE_NUMBER="9699511296"
+MOBILE_NUMBER="99XXYYZZAA"
 
 # Docker
 docker exec redis redis-cli -a $REDIS_PASSWORD SADD out_sms_numbers $MOBILE_NUMBER
@@ -424,7 +424,7 @@ docker exec redis redis-cli -a $REDIS_PASSWORD INFO | head -20
 
 # Test cache operations
 docker exec redis redis-cli -a $REDIS_PASSWORD SCARD out_sms_numbers  # Count cached numbers
-docker exec redis redis-cli -a $REDIS_PASSWORD SISMEMBER out_sms_numbers "9699511296"  # Check specific number
+docker exec redis redis-cli -a $REDIS_PASSWORD SISMEMBER out_sms_numbers "99XXYYZZAA"  # Check specific number
 ```
 
 #### 6. SMS Processing Workflow Test

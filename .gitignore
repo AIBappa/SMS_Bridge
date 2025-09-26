@@ -13,6 +13,27 @@ docs/REORGANIZATION_SUMMARY.md
 docs/CLEANUP_COMPLETE.md
 docs/prompt1.md
 docs/prompt2.md
+docs/Integration.md
+docs/SMS_Bridge_integration_prompt1.md
 
 #Ignore log
 *.log
+cloudflare_tunnel/credentials-file.json
+cloudflare_tunnel/config.yml
+
+#Ignore build files
+build/
+dist/
+__pycache__/
+*.pyc
+# Ignore IDE specific files
+.vscode/
+.idea/
+
+# Secrets and credentials
+cloudflare_tunnel/config.yml
+cloudflare_tunnel/credentials-file.json
+vault.yml
+secrets_bundle_sms_bridge.tar.gz
+secrets_transfer/
+secrets_transfer/README_TRANSFER.md

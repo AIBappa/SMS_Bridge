@@ -8,13 +8,13 @@ async def normalize_mobile_number(mobile_number: str, pool, default_country_code
     Normalize mobile number by extracting country code and local number.
     
     Args:
-        mobile_number: Raw mobile number (e.g., "+919699511296", "919699511296", "9699511296")
+    mobile_number: Raw mobile number (e.g., "+9199XXYYZZAA", "9199XXYYZZAA", "99XXYYZZAA")
         pool: Database connection pool
         default_country_code: Default country code if none provided
     
     Returns:
         tuple: (country_code, local_number)
-        Example: ("91", "9699511296")
+    Example: ("91", "99XXYYZZAA")
     """
     # Remove all non-digit characters
     clean_number = re.sub(r'[^\d]', '', mobile_number)

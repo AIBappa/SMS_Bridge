@@ -1,0 +1,326 @@
+openapi: 3.0.3
+info:
+  title: SMS Bridge Integration API
+  version: 1.0.0
+  description: >-
+    Machine-readable API specification for the SMS Bridge integration. This
+    OpenAPI file describes inbound endpoints implemented by the SMS Bridge
+    (used by CF Hono backend and local mobile webhooks) and the outbound
+    webhook contract used when the SMS Bridge forwards validated messages to
+    an external Cloudflare backend.
+servers:
+  - url: https://your-tunnel-domain.com
+    description: Public endpoint (via Cloudflare tunnel)
+  - url: http://localhost:8080
+    description: Local endpoint for on-prem/mobile testing
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API-Key
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Short machine-readable error code
+        message:
+          type: string
+          description: Human readable error message
+        details:
+          type: object
+          description: Optional object with further details or validation errors
+        timestamp:
+          type: string
+          format: date-time
+          description: Server timestamp (UTC)
+      example:
+        code: VALIDATION_ERROR
+        message: Invalid mobile number format
+        details:
+          mobile_number: Must be E.164
+        timestamp: '2025-09-19T12:00:00Z'
+
+    HealthChecks:
+      type: object
+      properties:
+        database:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        redis:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        batch_processor:
+          type: string
+          enum: [running, stopped, degraded]
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          $ref: '#/components/schemas/HealthChecks'
+      example:
+        status: healthy
+        service: sms-bridge
+        version: 1.0.0
+        timestamp: '2025-09-19T12:00:00Z'
+        checks:
+          database: healthy
+          redis: healthy
+          batch_processor: running
+
+    OnboardHashResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        mobile_number:
+          type: string
+          description: E.164 formatted mobile number
+        hash:
+          type: string
+          description: 64-hex SHA-256 hash used for onboarding
+        generated_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+      required: [status, mobile_number, hash]
+      example:
+        status: success
+  mobile_number: +9199XXYYZZAA
+        hash: a06f0b785d6613cadec3ed12c27e07615427bf1b79d091e9e8da22070ad14f7d
+        generated_at: '2025-09-19T12:00:00Z'
+        expires_at: '2025-09-20T12:00:00Z'
+
+    OnboardHashError:
+      type: object
+      properties:
+        status:
+          type: string
+        error:
+          type: string
+        code:
+          type: string
+      example:
+        status: error
+        error: Mobile number already onboarded
+        code: DUPLICATE_MOBILE
+
+    SmsReceiveRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 format (e.g. +9199XXYYZZAA)
+        message:
+          type: string
+        received_at:
+          type: string
+          format: date-time
+        sender:
+          type: string
+      required: [mobile_number, message, received_at]
+      example:
+  mobile_number: +9199XXYYZZAA
+        message: "ONBOARD:a06f0b7..."
+        received_at: '2025-09-19T12:00:00Z'
+  sender: +9199XXYYZZAA
+
+    SmsReceiveResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message_id:
+          type: string
+          description: UUID assigned to the stored message
+        queued_for_processing:
+          type: boolean
+      required: [status, message_id, queued_for_processing]
+      example:
+        status: received
+        message_id: 4f3b2a8e-1c2d-4f3a-9f12-6f3d6a0a9c1b
+        queued_for_processing: true
+
+    OutboundValidatedSms:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 format
+        country_code:
+          type: string
+        local_mobile:
+          type: string
+        message:
+          type: string
+        received_timestamp:
+          type: string
+          format: date-time
+        validation_results:
+          type: object
+          additionalProperties:
+            type: integer
+            description: 1=pass,2=fail,3=skipped
+        batch_id:
+          type: string
+        processed_at:
+          type: string
+          format: date-time
+      required: [mobile_number, country_code, local_mobile, message, received_timestamp, validation_results, batch_id, processed_at]
+      example:
+  mobile_number: +9199XXYYZZAA
+        country_code: '91'
+  local_mobile: '99XXYYZZAA'
+        message: 'ONBOARD:abc123def456...'
+        received_timestamp: '2025-09-19T12:00:00Z'
+        validation_results:
+          foreign_number_check: 1
+          blacklist_check: 1
+          duplicate_check: 1
+          header_hash_check: 1
+          mobile_check: 1
+          time_window_check: 1
+        batch_id: uuid-string-here
+        processed_at: '2025-09-19T12:00:01Z'
+
+paths:
+  /onboard/register/{mobile_number}:
+    get:
+      summary: Generate or return onboarding hash for mobile number
+      parameters:
+        - in: path
+          name: mobile_number
+          required: true
+          schema:
+            type: string
+          description: E.164 formatted mobile number
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Hash generated or existing hash returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardHashResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate mobile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardHashError'
+
+  /health:
+    get:
+      summary: Health status of SMS Bridge
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service degraded or unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /sms/receive:
+    post:
+      summary: Receive webhook from local mobile device for incoming SMS
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SmsReceiveRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                mobile_number:
+                  type: string
+                message:
+                  type: string
+                received_at:
+                  type: string
+                  format: date-time
+              required: [mobile_number, message, received_at]
+      responses:
+        '202':
+          description: Accepted and queued for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsReceiveResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /outbound/validated-sms:
+    post:
+      summary: Outbound webhook contract for validated SMS (used by SMS Bridge)
+      description: External CF backend should accept this payload when the SMS Bridge forwards validated SMS
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundValidatedSms'
+      responses:
+        '200':
+          description: Accepted
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+security:
+  - BearerAuth: []

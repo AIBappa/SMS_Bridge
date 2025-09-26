@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import List, Dict, Optional
 import asyncpg
 import redis
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, Depends
+from fastapi.routing import APIRoute
 from pydantic import BaseModel
 import requests
 
@@ -35,6 +36,13 @@ class OnboardingResponse(BaseModel):
     hash: str
     message: str
 
+# Response model for GeoPrasidh compatible format
+class GeoPrasidhOnboardingResponse(BaseModel):
+    mobile_number: str
+    hash: str
+    expires_at: str
+    status: str
+
 # Load configuration
 CONFIG_FILE = os.path.expanduser('~/sms_bridge_config.json')
 try:
@@ -47,6 +55,37 @@ CF_BACKEND_URL = os.getenv('CF_BACKEND_URL', config.get('cf_endpoint', 'https://
 API_KEY = os.getenv('CF_API_KEY', config.get('cf_api_key', ''))
 
 HASH_SECRET_KEY = os.getenv('HASH_SECRET_KEY', '')  # Added for hash validation
+
+# API Key for incoming requests from GeoPrasidh (redacted placeholder)
+GEOPRASIDH_API_KEY = os.getenv('GEOPRASIDH_API_KEY', 'dev-api-key-REDACTED')
+
+# Authentication dependency
+def verify_api_key(authorization: str = Header(None)):
+    """Verify the API key from Authorization header"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    
+    if not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail="Invalid authorization header format")
+    
+    token = authorization.replace('Bearer ', '')
+    if token != GEOPRASIDH_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    
+    return token
+
+def normalize_mobile_number(mobile: str) -> str:
+    """Normalize mobile number to remove + and extract digits"""
+    # Remove + and any spaces/dashes
+    normalized = mobile.replace('+', '').replace('-', '').replace(' ', '')
+    
+    # Remove country code if present (assuming +91 for India)
+    if normalized.startswith('91') and len(normalized) == 12:
+        normalized = normalized[2:]  # Remove '91' prefix
+    
+    return normalized
+
+# Load configuration
 
 POSTGRES_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'localhost'),
@@ -506,6 +545,104 @@ async def register_mobile(request: OnboardingRequest):
         logger.error(f"Error in register_mobile: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@app.get("/onboard/register/{mobile_number}", response_model=GeoPrasidhOnboardingResponse)
+async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(verify_api_key)):
+    """
+    GeoPrasidh-compatible endpoint for mobile registration.
+    Accepts mobile number with + prefix and returns hash with expiry.
+    """
+    try:
+        pool = await get_db_pool()
+        
+        # Normalize mobile number (remove + and country code)
+        normalized_mobile = normalize_mobile_number(mobile_number)
+        
+        # Validate mobile number format (10 digits after normalization)
+        import re
+        if not re.match(r'^\d{10}$', normalized_mobile):
+            raise HTTPException(status_code=400, detail="Invalid mobile number format")
+        
+        # Generate salt
+        async with pool.acquire() as conn:
+            salt_length = int(await conn.fetchval(
+                "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
+            ))
+        
+        salt = secrets.token_hex(salt_length // 2)  # hex gives 2 chars per byte
+        
+        # Check if mobile number already exists and is active
+        async with pool.acquire() as conn:
+            existing = await conn.fetchrow(
+                "SELECT mobile_number, is_active FROM onboarding_mobile WHERE mobile_number = $1",
+                normalized_mobile
+            )
+            
+            if existing and existing['is_active']:
+                # Return existing active registration
+                existing_hash = await conn.fetchval(
+                    "SELECT hash FROM onboarding_mobile WHERE mobile_number = $1",
+                    normalized_mobile
+                )
+                expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+                return GeoPrasidhOnboardingResponse(
+                    mobile_number=mobile_number,  # Return original format
+                    hash=existing_hash,
+                    expires_at=expires_at,
+                    status="pending"
+                )
+            
+            # Insert or update onboarding record
+            if existing:
+                # Reactivate existing record with new salt
+                await conn.execute("""
+                    UPDATE onboarding_mobile 
+                    SET salt = $1, request_timestamp = NOW(), is_active = true 
+                    WHERE mobile_number = $2
+                """, salt, normalized_mobile)
+            else:
+                # Create new record
+                await conn.execute("""
+                    INSERT INTO onboarding_mobile (mobile_number, salt, hash) 
+                    VALUES ($1, $2, $3)
+                """, normalized_mobile, salt, "")  # hash will be computed below
+        
+        # Get permitted header from settings (use first one for generation)
+        async with pool.acquire() as conn:
+            permitted_headers_str = await conn.fetchval(
+                "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
+            )
+        
+        if not permitted_headers_str:
+            raise HTTPException(status_code=500, detail="No permitted headers configured in system settings")
+        
+        # Use the first permitted header for hash generation
+        demo_header = permitted_headers_str.split(',')[0].strip()
+        data_to_hash = f"{demo_header}{normalized_mobile}{salt}"
+        computed_hash = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()
+        
+        # Update the hash in database
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE onboarding_mobile SET hash = $1 WHERE mobile_number = $2",
+                computed_hash, normalized_mobile
+            )
+        
+        # Generate expires_at timestamp (1 hour from now, rounded to next hour)
+        expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+        
+        return GeoPrasidhOnboardingResponse(
+            mobile_number=mobile_number,  # Return original format with +
+            hash=computed_hash,
+            expires_at=expires_at,
+            status="pending"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in register_mobile_geoprasidh: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @app.get("/onboarding/status/{mobile_number}")
 async def get_onboarding_status(mobile_number: str):
     """
@@ -570,6 +707,34 @@ async def deactivate_mobile(mobile_number: str):
     except Exception as e:
         logger.error(f"Error in deactivate_mobile: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/webhook/validated")
+async def webhook_validated(request: Request):
+    """
+    Webhook endpoint for GeoPrasidh to receive validated SMS notifications.
+    """
+    try:
+        data = await request.json()
+        mobile_number = data.get('mobile_number', '')
+        message = data.get('message', '')
+        timestamp = data.get('timestamp', '')
+        validation_results = data.get('validation_results', {})
+        
+        logger.info(f"Received webhook for mobile: {mobile_number}, message: {message}")
+        
+        # Process the validated message
+        # This is where you'd update your database or trigger other actions
+        
+        return {
+            "status": "received",
+            "mobile_number": mobile_number,
+            "processed": True,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing webhook: {e}")
+        raise HTTPException(status_code=400, detail=f"Error processing webhook: {str(e)}")
 
 @app.get("/health")
 async def health_check():
