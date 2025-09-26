@@ -19,3 +19,4 @@ docs/Integration.md
 *.log
 cloudflare_tunnel/credentials-file.json
 cloudflare_tunnel/config.yml
+docs/SMS_Bridge_integration_prompt1.md
