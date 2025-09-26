@@ -14,9 +14,19 @@ docs/CLEANUP_COMPLETE.md
 docs/prompt1.md
 docs/prompt2.md
 docs/Integration.md
+docs/SMS_Bridge_integration_prompt1.md
 
 #Ignore log
 *.log
 cloudflare_tunnel/credentials-file.json
 cloudflare_tunnel/config.yml
-docs/SMS_Bridge_integration_prompt1.md
+
+#Ignore build files
+build/
+dist/
+__pycache__/
+*.pyc
+# Ignore IDE specific files
+.vscode/
+.idea/
+
