@@ -4,8 +4,8 @@
 echo "Testing SMS Bridge endpoints for GeoPrasidh integration..."
 
 BASE_URL="http://localhost:3001"
-API_KEY="dev-api-key-12345"
-MOBILE_NUMBER="+9199XXYYZZAA"
+API_KEY="dev-api-key-REDACTED"
+MOBILE_NUMBER="+9199XXYYZZ"
 
 echo
 echo "1. Testing health endpoint..."

@@ -56,8 +56,8 @@ API_KEY = os.getenv('CF_API_KEY', config.get('cf_api_key', ''))
 
 HASH_SECRET_KEY = os.getenv('HASH_SECRET_KEY', '')  # Added for hash validation
 
-# API Key for incoming requests from GeoPrasidh
-GEOPRASIDH_API_KEY = os.getenv('GEOPRASIDH_API_KEY', 'dev-api-key-12345')
+# API Key for incoming requests from GeoPrasidh (redacted placeholder)
+GEOPRASIDH_API_KEY = os.getenv('GEOPRASIDH_API_KEY', 'dev-api-key-REDACTED')
 
 # Authentication dependency
 def verify_api_key(authorization: str = Header(None)):
