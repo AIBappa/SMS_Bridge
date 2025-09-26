@@ -36,3 +36,4 @@ cloudflare_tunnel/credentials-file.json
 vault.yml
 secrets_bundle_sms_bridge.tar.gz
 secrets_transfer/
+secrets_transfer/README_TRANSFER.md
