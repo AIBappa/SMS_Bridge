@@ -1,6 +1,6 @@
 import asyncio
 
-from observability.metrics import collect_once
+from core.observability.metrics import collect_once
 
 
 def test_collect_once_runs():

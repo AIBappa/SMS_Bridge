@@ -3,7 +3,7 @@ from prometheus_client.core import CollectorRegistry
 import asyncio
 import logging
 from typing import Optional
-from redis_client import redis_pool
+from core.redis_client import redis_pool
 
 logger = logging.getLogger(__name__)
 

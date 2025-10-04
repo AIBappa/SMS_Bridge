@@ -21,8 +21,13 @@ Kubernetes-based deployment using K3s and `kubernetes.core` Ansible collection
 ### 📁 Shared Files
 - `vault.yml` - Encrypted secrets (create from `docs/example_vault.yml`)
 - `schema.sql` - Database schema
-- `sms_server.py` - Main SMS processing application
-- `checks/` - Validation modules
+- `core/` - **Core application package** (consolidated Python code)
+  - `sms_server.py` - Main SMS processing application
+  - `redis_client.py` - Async Redis client with pooling
+  - `background_workers.py` - Abuse detection and monitoring workers
+  - `requirements.txt` - Python dependencies
+  - `checks/` - Validation modules
+  - `observability/` - Prometheus metrics and monitoring
 - `docs/` - Documentation and examples
 - `tests/` - Testing utilities and sample data
 

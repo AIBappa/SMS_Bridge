@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, De
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 import requests
-from redis_client import redis_pool  # Async Redis pool for Redis-first architecture
+from core.redis_client import redis_pool  # Async Redis pool for Redis-first architecture
 
 # Observability ASGI metrics mount (exposes /metrics) will be mounted after app is created
 
@@ -113,7 +113,7 @@ pool = None
 
 # Try to mount observability ASGI app at /metrics (optional)
 try:
-    from observability.asgi_metrics import app as metrics_asgi_app
+    from core.observability.asgi_metrics import app as metrics_asgi_app
     app.mount('/metrics', metrics_asgi_app)
 except Exception:
     logging.getLogger(__name__).debug('Observability ASGI app not available; /metrics not mounted')
@@ -436,7 +436,7 @@ async def startup_event():
     
     # Start background workers for abuse detection and monitoring
     try:
-        from background_workers import start_background_workers
+        from core.background_workers import start_background_workers
         await start_background_workers()
         logger.info("Background workers started successfully")
     except Exception as e:
@@ -865,12 +865,12 @@ async def health_check():
 
 
 # Import validation functions
-from checks.blacklist_check import validate_blacklist_check
-from checks.duplicate_check import validate_duplicate_check
-from checks.foreign_number_check import validate_foreign_number_check
-from checks.header_hash_check import validate_header_hash_check
-from checks.mobile_check import validate_mobile_check
-from checks.time_window_check import validate_time_window_check
+from core.checks.blacklist_check import validate_blacklist_check
+from core.checks.duplicate_check import validate_duplicate_check
+from core.checks.foreign_number_check import validate_foreign_number_check
+from core.checks.header_hash_check import validate_header_hash_check
+from core.checks.mobile_check import validate_mobile_check
+from core.checks.time_window_check import validate_time_window_check
 
 # Explicit function mapping dictionary to prevent code injection
 VALIDATION_FUNCTIONS = {

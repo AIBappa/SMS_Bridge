@@ -143,18 +143,24 @@
         path: "{{ project_dir }}/.image_built"
         state: absent
 
+    - name: Copy core application package
+      copy:
+        src: ../core/
+        dest: "{{ project_dir }}/core/"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
     - name: Update Dockerfile for SMS receiver
       copy:
         dest: "{{ project_dir }}/Dockerfile"
         content: |
           FROM python:3.11-slim
           WORKDIR /app
-          COPY requirements.txt /app/requirements.txt
-          RUN pip install --no-cache-dir -r requirements.txt
-          COPY sms_server.py /app/sms_server.py
-          COPY checks/ /app/checks/
+          COPY core/requirements.txt /app/core/requirements.txt
+          RUN pip install --no-cache-dir -r core/requirements.txt
+          COPY core/ /app/core/
           EXPOSE 8080
-          CMD ["uvicorn", "sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
+          CMD ["uvicorn", "core.sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 

@@ -1,18 +1,30 @@
 # Observability Integration Summary
 
 ## Overview
-The SMS Bridge application now includes comprehensive Prometheus metrics for monitoring application health and performance.
+The SMS Bri# Line ~198-199: Conditionally increment counter
+if SMS_MONITOR_EVENTS_PROCESSED:
+    SMS_MONITOR_EVENTS_PROCESSED.inc(len(events))
+```
+
+### 3. Deployment Updates
+
+#### Ansible Playbook (`ansible-k3s/setup_sms_bridge_k3s.yml`)
+- Added task to copy `core/` package (includes observability/) to build context
+- Updated Dockerfile to include `COPY core/ /app/core/`
+
+#### `core/requirements.txt`
+- Added `prometheus-client==0.17.1`on now includes comprehensive Prometheus metrics for monitoring application health and performance.
 
 ## Components Added
 
-### 1. Observability Package (`observability/`)
+### 1. Observability Package (`core/observability/`)
 
-#### `observability/__init__.py`
+#### `core/observability/__init__.py`
 - Package initialization file
 - Exports all metrics and helper functions for easy import
-- Makes metrics available via `from observability import SMS_ONBOARD_REQUESTS`
+- Makes metrics available via `from core.observability import SMS_ONBOARD_REQUESTS`
 
-#### `observability/metrics.py`
+#### `core/observability/metrics.py`
 - **Gauges** (snapshot metrics):
   - `sms_bridge_monitor_queue_length` - Length of sms_monitor_queue in Redis
   - `sms_bridge_out_sms_numbers_count` - Count of validated numbers
@@ -26,35 +38,35 @@ The SMS Bridge application now includes comprehensive Prometheus metrics for mon
 - **Helper function**:
   - `collect_once()` - Async function that updates all gauges from Redis
 
-#### `observability/asgi_metrics.py`
+#### `core/observability/asgi_metrics.py`
 - ASGI application wrapper for Prometheus `/metrics` endpoint
 - Calls `collect_once()` before each scrape to refresh gauge values
 - Integrates with FastAPI via `app.mount('/metrics', metrics_asgi_app)`
 
 ### 2. Application Integration
 
-#### `sms_server.py` Changes
+#### `core/sms_server.py` Changes
 ```python
 # Line ~116: Mount metrics endpoint
 try:
-    from observability.asgi_metrics import app as metrics_asgi_app
+    from core.observability.asgi_metrics import app as metrics_asgi_app
     app.mount('/metrics', metrics_asgi_app)
 except Exception:
     logging.getLogger(__name__).debug('Observability ASGI app not available; /metrics not mounted')
 
 # Line ~682-683: Increment onboard counter
 try:
-    from observability.metrics import SMS_ONBOARD_REQUESTS
+    from core.observability.metrics import SMS_ONBOARD_REQUESTS
     SMS_ONBOARD_REQUESTS.inc()
 except Exception:
     pass
 ```
 
-#### `background_workers.py` Changes
+#### `core/background_workers.py` Changes
 ```python
 # Line ~14-16: Import with fallback
 try:
-    from observability.metrics import SMS_MONITOR_EVENTS_PROCESSED
+    from core.observability.metrics import SMS_MONITOR_EVENTS_PROCESSED
 except Exception:
     SMS_MONITOR_EVENTS_PROCESSED = None
 
@@ -66,10 +78,10 @@ if SMS_MONITOR_EVENTS_PROCESSED:
 ### 3. Deployment Updates
 
 #### Ansible Playbook (`ansible-k3s/setup_sms_bridge_k3s.yml`)
-- Added task to copy `observability/` package to build context
-- Updated Dockerfile to include `COPY observability/ /app/observability/`
+- Added task to copy `core/` package (includes observability/) to build context
+- Updated Dockerfile to include `COPY core/ /app/core/`
 
-#### `requirements.txt`
+#### `core/requirements.txt`
 - Added `prometheus-client==0.17.1`
 
 ### 4. Grafana Dashboard

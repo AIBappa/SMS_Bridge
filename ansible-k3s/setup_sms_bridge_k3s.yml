@@ -101,45 +101,10 @@
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 
-    - name: Copy requirements file
+    - name: Copy core application package
       copy:
-        src: ../requirements.txt
-        dest: "{{ project_dir }}/requirements.txt"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
-
-    - name: Copy Python SMS server script
-      copy:
-        src: ../sms_server.py
-        dest: "{{ project_dir }}/sms_server.py"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
-
-    - name: Copy Redis client module
-      copy:
-        src: ../redis_client.py
-        dest: "{{ project_dir }}/redis_client.py"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
-
-    - name: Copy background workers module
-      copy:
-        src: ../background_workers.py
-        dest: "{{ project_dir }}/background_workers.py"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
-
-    - name: Copy validation check files
-      copy:
-        src: ../checks/
-        dest: "{{ project_dir }}/checks/"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
-
-    - name: Copy observability package
-      copy:
-        src: ../observability/
-        dest: "{{ project_dir }}/observability/"
+        src: ../core/
+        dest: "{{ project_dir }}/core/"
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 
@@ -149,15 +114,11 @@
         content: |
           FROM python:3.11-slim
           WORKDIR /app
-          COPY requirements.txt /app/requirements.txt
-          RUN pip install --no-cache-dir -r requirements.txt
-          COPY sms_server.py /app/sms_server.py
-          COPY redis_client.py /app/redis_client.py
-          COPY background_workers.py /app/background_workers.py
-          COPY observability/ /app/observability/
-          COPY checks/ /app/checks/
+          COPY core/requirements.txt /app/core/requirements.txt
+          RUN pip install --no-cache-dir -r core/requirements.txt
+          COPY core/ /app/core/
           EXPOSE 8080
-          CMD ["uvicorn", "sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
+          CMD ["uvicorn", "core.sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 

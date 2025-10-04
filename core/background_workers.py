@@ -7,11 +7,11 @@ import asyncio
 import json
 import logging
 from typing import Dict, Any, List
-from redis_client import redis_pool
+from core.redis_client import redis_pool
 import asyncpg
 import os
 try:
-    from observability.metrics import SMS_MONITOR_EVENTS_PROCESSED
+    from core.observability.metrics import SMS_MONITOR_EVENTS_PROCESSED
 except Exception:
     SMS_MONITOR_EVENTS_PROCESSED = None
 
