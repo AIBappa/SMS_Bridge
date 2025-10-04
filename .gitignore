@@ -39,3 +39,6 @@ secrets_transfer/
 secrets_transfer/README_TRANSFER.md
 docs/system concept.pptx
 docs/system concept.odp
+
+# Ignore test files
+test_geoprasidh_integration.sh

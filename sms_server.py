@@ -539,12 +539,17 @@ async def register_mobile(request: OnboardingRequest):
         if not re.match(r'^\d{10,15}$', mobile_number):
             raise HTTPException(status_code=400, detail="Invalid mobile number format")
         
-        # Generate salt
+        # Generate salt (use a sensible default if the setting is missing)
         async with pool.acquire() as conn:
-            salt_length = int(await conn.fetchval(
+            salt_val = await conn.fetchval(
                 "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
-            ))
-        
+            )
+        # If the DB value is missing or empty, default to 16 (bytes -> 32 hex chars)
+        try:
+            salt_length = int(salt_val or 16)
+        except (TypeError, ValueError):
+            salt_length = 16
+
         salt = secrets.token_hex(salt_length // 2)  # hex gives 2 chars per byte
         
         # Check if mobile number already exists and is active

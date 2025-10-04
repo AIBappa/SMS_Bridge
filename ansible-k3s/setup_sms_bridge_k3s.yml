@@ -136,6 +136,13 @@
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 
+    - name: Copy observability package
+      copy:
+        src: ../observability/
+        dest: "{{ project_dir }}/observability/"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
     - name: Create Dockerfile for SMS receiver
       copy:
         dest: "{{ project_dir }}/Dockerfile"
@@ -147,6 +154,7 @@
           COPY sms_server.py /app/sms_server.py
           COPY redis_client.py /app/redis_client.py
           COPY background_workers.py /app/background_workers.py
+          COPY observability/ /app/observability/
           COPY checks/ /app/checks/
           EXPOSE 8080
           CMD ["uvicorn", "sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
