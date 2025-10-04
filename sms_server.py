@@ -16,6 +16,8 @@ from pydantic import BaseModel
 import requests
 from redis_client import redis_pool  # Async Redis pool for Redis-first architecture
 
+# Observability ASGI metrics mount (exposes /metrics) will be mounted after app is created
+
 # Pydantic models
 class SMSInput(BaseModel):
     sender_number: str
@@ -108,6 +110,13 @@ REDIS_CONFIG = {
 app = FastAPI()
 redis_client = redis.StrictRedis(**REDIS_CONFIG)
 pool = None
+
+# Try to mount observability ASGI app at /metrics (optional)
+try:
+    from observability.asgi_metrics import app as metrics_asgi_app
+    app.mount('/metrics', metrics_asgi_app)
+except Exception:
+    logging.getLogger(__name__).debug('Observability ASGI app not available; /metrics not mounted')
 
 # Logging setup with file handlers for persistent logging
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
@@ -663,6 +672,12 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         
         # Store hash in Redis with 24h TTL (hot path - no DB write)
         await redis_pool.setex(f'onboard_hash:{normalized_mobile}', 86400, computed_hash)
+        # Increment onboarding Prometheus counter if available
+        try:
+            from observability.metrics import SMS_ONBOARD_REQUESTS
+            SMS_ONBOARD_REQUESTS.inc()
+        except Exception:
+            pass
         logger.info(f"Stored onboard hash in Redis for {normalized_mobile} (TTL: 24h)")
         
         # Log to monitor queue for async audit (non-blocking)

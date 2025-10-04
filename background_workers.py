@@ -10,6 +10,10 @@ from typing import Dict, Any, List
 from redis_client import redis_pool
 import asyncpg
 import os
+try:
+    from observability.metrics import SMS_MONITOR_EVENTS_PROCESSED
+except Exception:
+    SMS_MONITOR_EVENTS_PROCESSED = None
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +193,12 @@ async def sms_monitor_logger(batch_size: int = 100, interval: int = 30):
                                         ]
                                     )
                                 logger.info(f"Logged {len(events)} events to sms_monitor table")
+                                # Increment Prometheus counter for processed events
+                                try:
+                                    if SMS_MONITOR_EVENTS_PROCESSED:
+                                        SMS_MONITOR_EVENTS_PROCESSED.inc(len(events))
+                                except Exception:
+                                    pass
                             except Exception as e:
                                 logger.error(f"Error inserting monitor events to DB: {e}")
                         
