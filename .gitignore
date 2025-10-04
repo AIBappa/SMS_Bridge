@@ -37,3 +37,5 @@ vault.yml
 secrets_bundle_sms_bridge.tar.gz
 secrets_transfer/
 secrets_transfer/README_TRANSFER.md
+docs/system concept.pptx
+docs/system concept.odp
