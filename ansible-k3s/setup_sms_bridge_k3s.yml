@@ -115,6 +115,20 @@
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 
+    - name: Copy Redis client module
+      copy:
+        src: ../redis_client.py
+        dest: "{{ project_dir }}/redis_client.py"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
+    - name: Copy background workers module
+      copy:
+        src: ../background_workers.py
+        dest: "{{ project_dir }}/background_workers.py"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
     - name: Copy validation check files
       copy:
         src: ../checks/
@@ -131,6 +145,8 @@
           COPY requirements.txt /app/requirements.txt
           RUN pip install --no-cache-dir -r requirements.txt
           COPY sms_server.py /app/sms_server.py
+          COPY redis_client.py /app/redis_client.py
+          COPY background_workers.py /app/background_workers.py
           COPY checks/ /app/checks/
           EXPOSE 8080
           CMD ["uvicorn", "sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
@@ -157,14 +173,17 @@
           - Buildah: sudo apt install buildah
       when: docker_available.rc != 0 and buildah_available.rc != 0
 
+    - name: Remove old image build marker to force rebuild
+      file:
+        path: "{{ project_dir }}/.image_built"
+        state: absent
+
     - name: Build SMS receiver image with Docker
       shell: |
         cd {{ project_dir }}
         docker build -t {{ python_receiver_image }}:latest .
         # Save and import into K3s
         docker save {{ python_receiver_image }}:latest | sudo k3s ctr images import -
-      args:
-        creates: "{{ project_dir }}/.image_built"
       when: docker_available.rc == 0
       become: yes
       become_method: sudo
@@ -177,16 +196,7 @@
         buildah push {{ python_receiver_image }}:latest containers-storage:{{ python_receiver_image }}:latest
         buildah push {{ python_receiver_image }}:latest oci-archive:/tmp/{{ python_receiver_image }}.tar
         sudo k3s ctr images import /tmp/{{ python_receiver_image }}.tar
-      args:
-        creates: "{{ project_dir }}/.image_built"
       when: docker_available.rc != 0 and buildah_available.rc == 0
-
-    - name: Mark image as built
-      file:
-        path: "{{ project_dir }}/.image_built"
-        state: touch
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_id }}"
 
     # Create Kubernetes manifests
     - name: Create namespace manifest
