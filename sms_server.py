@@ -4,6 +4,8 @@ import asyncio
 import logging
 import secrets
 import hashlib
+import uuid as uuid_module
+import re
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 import asyncpg
@@ -12,6 +14,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, De
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 import requests
+from redis_client import redis_pool  # Async Redis pool for Redis-first architecture
 
 # Pydantic models
 class SMSInput(BaseModel):
@@ -175,6 +178,28 @@ async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
     pool = await get_db_pool()
     
     for sms in batch_sms_data:
+        # REDIS-FIRST EARLY CHECKS (before DB validation pipeline)
+        
+        # 1. Check blacklist in Redis (instant, no DB I/O)
+        if await redis_pool.sismember('blacklist_mobiles', sms.local_mobile):
+            logger.info(f"SMS from {sms.local_mobile} blocked - blacklisted")
+            await redis_pool.lpush("sms_monitor_queue", {
+                "uuid": sms.uuid,
+                "mobile": sms.local_mobile,
+                "status": "invalid",
+                "reason": "blacklist",
+                "country_code": sms.country_code
+            })
+            # Skip this SMS entirely - continue to next
+            continue
+        
+        # 2. Increment abuse counter (non-blocking, never delays good users)
+        try:
+            await redis_pool.incr(f'abuse_counter:{sms.local_mobile}')
+            await redis_pool.expire(f'abuse_counter:{sms.local_mobile}', 86400)  # 24h TTL
+        except Exception as e:
+            logger.warning(f"Failed to increment abuse counter for {sms.local_mobile}: {e}")
+        
         # Initialize all check results to 0 (not run)
         results = {
             'blacklist_check': 0,
@@ -211,7 +236,16 @@ async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
             elif result == 3:  # skipped
                 continue
         
-        # Update sms_monitor with country code and local mobile
+        # Log to Redis monitor queue (async, non-blocking)
+        await redis_pool.lpush("sms_monitor_queue", {
+            "uuid": sms.uuid,
+            "mobile": sms.local_mobile,
+            "status": overall_status,
+            "reason": failed_check or "",
+            "country_code": sms.country_code
+        })
+        
+        # Also update sms_monitor table directly (keep existing behavior)
         async with pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO sms_monitor (uuid, overall_status, failed_at_check, processing_completed_at, 
@@ -240,6 +274,7 @@ async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
                     VALUES ($1, $2, $3, $4, $5)
                 """, sms.uuid, sms.sender_number, sms.sms_message, sms.country_code, sms.local_mobile)
             redis_client.sadd('out_sms_numbers', sms.local_mobile)
+            await redis_pool.sadd('out_sms_numbers', sms.local_mobile)  # Also add to async Redis
             
             # Forward to cloud backend only after validation passes
             if CF_BACKEND_URL and API_KEY:
@@ -254,6 +289,7 @@ async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
                     logger.info(f"Forwarded validated SMS to cloud, status: {response.status_code}")
                 except Exception as e:
                     logger.warning(f"Cloud forwarding failed for validated SMS: {e}")
+
 
 async def batch_processor():
     """
@@ -384,12 +420,29 @@ async def batch_processor():
 
 @app.on_event("startup")
 async def startup_event():
-    # Cache warmup with local mobile numbers for consistency
+    """Initialize services and start background workers"""
+    # Initialize async Redis pool (Redis-first architecture)
+    await redis_pool.init()
+    logger.info("Async Redis pool initialized")
+    
+    # Start background workers for abuse detection and monitoring
+    try:
+        from background_workers import start_background_workers
+        await start_background_workers()
+        logger.info("Background workers started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start background workers: {e}")
+    
+    # Cache warmup: Load existing validated numbers into Redis
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         numbers = await conn.fetch("SELECT local_mobile FROM out_sms WHERE local_mobile IS NOT NULL")
         for row in numbers:
+            # Use both sync (for backward compat) and async Redis
             redis_client.sadd('out_sms_numbers', row['local_mobile'])
+            await redis_pool.sadd('out_sms_numbers', row['local_mobile'])
+    logger.info(f"Redis cache warmed up with {len(numbers)} validated numbers")
+
     
     # Start batch processor
     asyncio.create_task(batch_processor())
@@ -548,65 +601,53 @@ async def register_mobile(request: OnboardingRequest):
 @app.get("/onboard/register/{mobile_number}", response_model=GeoPrasidhOnboardingResponse)
 async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(verify_api_key)):
     """
-    GeoPrasidh-compatible endpoint for mobile registration.
+    GeoPrasidh-compatible endpoint for mobile registration (Redis-first).
     Accepts mobile number with + prefix and returns hash with expiry.
+    NO database I/O in hot path - uses Redis exclusively.
     """
     try:
-        pool = await get_db_pool()
-        
         # Normalize mobile number (remove + and country code)
         normalized_mobile = normalize_mobile_number(mobile_number)
         
         # Validate mobile number format (10 digits after normalization)
-        import re
         if not re.match(r'^\d{10}$', normalized_mobile):
             raise HTTPException(status_code=400, detail="Invalid mobile number format")
         
-        # Generate salt
+        # REDIS-FIRST CHECKS (no DB I/O)
+        
+        # Check if already onboarded (Redis only)
+        if await redis_pool.sismember('out_sms_numbers', normalized_mobile):
+            raise HTTPException(status_code=409, detail="Mobile number already onboarded and validated")
+        
+        # Check if blacklisted (Redis only)
+        if await redis_pool.sismember('blacklist_mobiles', normalized_mobile):
+            raise HTTPException(status_code=403, detail="Mobile number is blacklisted")
+        
+        # Check if hash already exists in Redis (within 24h window)
+        existing_hash = await redis_pool.get(f'onboard_hash:{normalized_mobile}')
+        if existing_hash:
+            # Return existing hash (still valid)
+            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            logger.info(f"Returning existing onboard hash for {normalized_mobile}")
+            return GeoPrasidhOnboardingResponse(
+                mobile_number=mobile_number,
+                hash=existing_hash,
+                expires_at=expires_at,
+                status="pending"
+            )
+        
+        # Generate new hash (minimal DB reads for config only)
+        pool = await get_db_pool()
+        
+        # Get salt length from settings
         async with pool.acquire() as conn:
             salt_length = int(await conn.fetchval(
                 "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
-            ))
+            ) or 16)
         
-        salt = secrets.token_hex(salt_length // 2)  # hex gives 2 chars per byte
+        salt = secrets.token_hex(salt_length // 2)
         
-        # Check if mobile number already exists and is active
-        async with pool.acquire() as conn:
-            existing = await conn.fetchrow(
-                "SELECT mobile_number, is_active FROM onboarding_mobile WHERE mobile_number = $1",
-                normalized_mobile
-            )
-            
-            if existing and existing['is_active']:
-                # Return existing active registration
-                existing_hash = await conn.fetchval(
-                    "SELECT hash FROM onboarding_mobile WHERE mobile_number = $1",
-                    normalized_mobile
-                )
-                expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
-                return GeoPrasidhOnboardingResponse(
-                    mobile_number=mobile_number,  # Return original format
-                    hash=existing_hash,
-                    expires_at=expires_at,
-                    status="pending"
-                )
-            
-            # Insert or update onboarding record
-            if existing:
-                # Reactivate existing record with new salt
-                await conn.execute("""
-                    UPDATE onboarding_mobile 
-                    SET salt = $1, request_timestamp = NOW(), is_active = true 
-                    WHERE mobile_number = $2
-                """, salt, normalized_mobile)
-            else:
-                # Create new record
-                await conn.execute("""
-                    INSERT INTO onboarding_mobile (mobile_number, salt, hash) 
-                    VALUES ($1, $2, $3)
-                """, normalized_mobile, salt, "")  # hash will be computed below
-        
-        # Get permitted header from settings (use first one for generation)
+        # Get permitted header from settings
         async with pool.acquire() as conn:
             permitted_headers_str = await conn.fetchval(
                 "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
@@ -620,12 +661,18 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         data_to_hash = f"{demo_header}{normalized_mobile}{salt}"
         computed_hash = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()
         
-        # Update the hash in database
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE onboarding_mobile SET hash = $1 WHERE mobile_number = $2",
-                computed_hash, normalized_mobile
-            )
+        # Store hash in Redis with 24h TTL (hot path - no DB write)
+        await redis_pool.setex(f'onboard_hash:{normalized_mobile}', 86400, computed_hash)
+        logger.info(f"Stored onboard hash in Redis for {normalized_mobile} (TTL: 24h)")
+        
+        # Log to monitor queue for async audit (non-blocking)
+        await redis_pool.lpush("sms_monitor_queue", {
+            "uuid": str(uuid_module.uuid4()),
+            "mobile": normalized_mobile,
+            "status": "onboard_requested",
+            "reason": "",
+            "country_code": "91"
+        })
         
         # Generate expires_at timestamp (1 hour from now, rounded to next hour)
         expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
@@ -738,7 +785,64 @@ async def webhook_validated(request: Request):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    """
+    Comprehensive health check endpoint.
+    Returns 200 if all systems operational, 503 if any component degraded.
+    """
+    health_status = {
+        "status": "healthy",
+        "components": {
+            "database": {"status": "unknown"},
+            "redis": {"status": "unknown"},
+            "background_workers": {"status": "running"}
+        }
+    }
+    overall_healthy = True
+    
+    # Check database connection
+    try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            result = await conn.fetchval("SELECT 1")
+            if result == 1:
+                health_status["components"]["database"]["status"] = "healthy"
+            else:
+                health_status["components"]["database"]["status"] = "degraded"
+                overall_healthy = False
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        health_status["components"]["database"]["status"] = "unhealthy"
+        health_status["components"]["database"]["error"] = str(e)
+        overall_healthy = False
+    
+    # Check Redis connection
+    try:
+        pong = await redis_pool.ping()
+        if pong:
+            health_status["components"]["redis"]["status"] = "healthy"
+        else:
+            health_status["components"]["redis"]["status"] = "degraded"
+            overall_healthy = False
+    except Exception as e:
+        logger.error(f"Redis health check failed: {e}")
+        health_status["components"]["redis"]["status"] = "unhealthy"
+        health_status["components"]["redis"]["error"] = str(e)
+        overall_healthy = False
+    
+    # Overall status
+    health_status["status"] = "healthy" if overall_healthy else "degraded"
+    
+    # Return appropriate HTTP status code
+    if overall_healthy:
+        return health_status
+    else:
+        from fastapi import Response
+        return Response(
+            content=json.dumps(health_status),
+            media_type="application/json",
+            status_code=503
+        )
+
 
 # Import validation functions
 from checks.blacklist_check import validate_blacklist_check
