@@ -462,97 +462,24 @@ async def receive_sms(request: Request, background_tasks: BackgroundTasks):
         logger.error(f"Error processing SMS: {e}")
         raise HTTPException(status_code=400, detail=f"Error processing SMS: {str(e)}")
 
-@app.post("/onboarding/register", response_model=OnboardingResponse)
-async def register_mobile(request: OnboardingRequest):
+@app.post("/onboarding/register", response_model=GeoPrasidhOnboardingResponse)
+async def register_mobile(request: OnboardingRequest, api_key: str = Depends(verify_api_key)):
     """
-    Register a mobile number for onboarding and generate hash.
-    Returns the mobile number, hash, and instruction message.
+    Register a mobile number for onboarding.
+    
+    This is the correct REST endpoint for creating new registrations.
+    Accepts mobile numbers with + prefix (e.g., +919876543210) and returns
+    hash with expiry timestamp in GeoPrasidh-compatible format.
+    
+    Features:
+    - API key authentication via Bearer token
+    - Redis caching for performance
+    - Idempotent: returns existing active registration if already exists
+    - GeoPrasidh-compatible response format
     """
     try:
         pool = await get_db_pool()
         mobile_number = request.mobile_number.strip()
-        
-        # Validate mobile number format
-        import re
-        if not re.match(r'^\d{10,15}$', mobile_number):
-            raise HTTPException(status_code=400, detail="Invalid mobile number format")
-        
-        # Generate salt
-        async with pool.acquire() as conn:
-            salt_length = int(await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
-            ))
-        
-        salt = secrets.token_hex(salt_length // 2)  # hex gives 2 chars per byte
-        
-        # Check if mobile number already exists and is active
-        async with pool.acquire() as conn:
-            existing = await conn.fetchrow(
-                "SELECT mobile_number, is_active FROM onboarding_mobile WHERE mobile_number = $1",
-                mobile_number
-            )
-            
-            if existing and existing['is_active']:
-                raise HTTPException(status_code=409, detail="Mobile number already registered and active")
-            
-            # Insert or update onboarding record
-            if existing:
-                # Reactivate existing record with new salt
-                await conn.execute("""
-                    UPDATE onboarding_mobile 
-                    SET salt = $1, request_timestamp = NOW(), is_active = true 
-                    WHERE mobile_number = $2
-                """, salt, mobile_number)
-            else:
-                # Create new record
-                await conn.execute("""
-                    INSERT INTO onboarding_mobile (mobile_number, salt, hash) 
-                    VALUES ($1, $2, $3)
-                """, mobile_number, salt, "")  # hash will be computed below
-        
-        # Get permitted header from settings (use first one for generation)
-        async with pool.acquire() as conn:
-            permitted_headers_str = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
-            )
-        
-        if not permitted_headers_str:
-            raise HTTPException(status_code=500, detail="No permitted headers configured in system settings")
-        
-        # Use the first permitted header for hash generation
-        demo_header = permitted_headers_str.split(',')[0].strip()
-        data_to_hash = f"{demo_header}{mobile_number}{salt}"
-        computed_hash = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()
-        
-        # Update the hash in database
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE onboarding_mobile SET hash = $1 WHERE mobile_number = $2",
-                computed_hash, mobile_number
-            )
-        
-        message = f"{demo_header}:{computed_hash}"
-        
-        return OnboardingResponse(
-            mobile_number=mobile_number,
-            hash=computed_hash,
-            message=message
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in register_mobile: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.get("/onboard/register/{mobile_number}", response_model=GeoPrasidhOnboardingResponse)
-async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(verify_api_key)):
-    """
-    GeoPrasidh-compatible endpoint for mobile registration.
-    Accepts mobile number with + prefix and returns hash with expiry.
-    """
-    try:
-        pool = await get_db_pool()
         
         # Normalize mobile number (remove + and country code)
         normalized_mobile = normalize_mobile_number(mobile_number)
@@ -562,6 +489,20 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         if not re.match(r'^\d{10}$', normalized_mobile):
             raise HTTPException(status_code=400, detail="Invalid mobile number format")
         
+        # Check Redis cache first
+        cache_key = f'onboard_hash:{normalized_mobile}'
+        cached_hash = redis_client.get(cache_key)
+        
+        if cached_hash:
+            # Return cached response
+            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            return GeoPrasidhOnboardingResponse(
+                mobile_number=mobile_number,  # Return original format with +
+                hash=cached_hash.decode('utf-8'),
+                expires_at=expires_at,
+                status="pending"
+            )
+        
         # Generate salt
         async with pool.acquire() as conn:
             salt_length = int(await conn.fetchval(
@@ -573,20 +514,20 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         # Check if mobile number already exists and is active
         async with pool.acquire() as conn:
             existing = await conn.fetchrow(
-                "SELECT mobile_number, is_active FROM onboarding_mobile WHERE mobile_number = $1",
+                "SELECT mobile_number, hash, is_active FROM onboarding_mobile WHERE mobile_number = $1",
                 normalized_mobile
             )
             
-            if existing and existing['is_active']:
-                # Return existing active registration
-                existing_hash = await conn.fetchval(
-                    "SELECT hash FROM onboarding_mobile WHERE mobile_number = $1",
-                    normalized_mobile
-                )
+            if existing and existing['is_active'] and existing['hash']:
+                # Return existing active registration (idempotent)
+                computed_hash = existing['hash']
+                # Cache in Redis (24 hour TTL)
+                redis_client.setex(cache_key, 86400, computed_hash)
+                
                 expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
                 return GeoPrasidhOnboardingResponse(
                     mobile_number=mobile_number,  # Return original format
-                    hash=existing_hash,
+                    hash=computed_hash,
                     expires_at=expires_at,
                     status="pending"
                 )
@@ -627,6 +568,9 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
                 computed_hash, normalized_mobile
             )
         
+        # Cache in Redis (24 hour TTL)
+        redis_client.setex(cache_key, 86400, computed_hash)
+        
         # Generate expires_at timestamp (1 hour from now, rounded to next hour)
         expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
         
@@ -636,6 +580,88 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
             expires_at=expires_at,
             status="pending"
         )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in register_mobile: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/onboard/status/{mobile_number}", response_model=GeoPrasidhOnboardingResponse, deprecated=True)
+async def get_onboard_status_geoprasidh(mobile_number: str, api_key: str = Depends(verify_api_key)):
+    """
+    Get onboarding status for a mobile number (read-only, no side effects).
+    
+    DEPRECATED: This endpoint previously created registrations using GET (violation of REST).
+    It has been refactored to be read-only. Use POST /onboarding/register for new registrations.
+    
+    This endpoint now:
+    - Only retrieves existing registration data (GET = read-only)
+    - Returns 404 if mobile number is not registered
+    - Does NOT create new registrations or modify state
+    - Uses Redis cache for performance
+    
+    Migration Guide:
+    - For registration: Use POST /onboarding/register
+    - For status checks: Use this endpoint or GET /onboarding/status/{mobile_number}
+    """
+    try:
+        pool = await get_db_pool()
+        
+        # Normalize mobile number (remove + and country code)
+        normalized_mobile = normalize_mobile_number(mobile_number)
+        
+        # Validate mobile number format (10 digits after normalization)
+        import re
+        if not re.match(r'^\d{10}$', normalized_mobile):
+            raise HTTPException(status_code=400, detail="Invalid mobile number format")
+        
+        # Check Redis cache first (read-only operation)
+        cache_key = f'onboard_hash:{normalized_mobile}'
+        cached_hash = redis_client.get(cache_key)
+        
+        if cached_hash:
+            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            logger.warning(f"GET /onboard/status/{mobile_number} - Deprecated endpoint used (Redis cache hit)")
+            return GeoPrasidhOnboardingResponse(
+                mobile_number=mobile_number,
+                hash=cached_hash.decode('utf-8'),
+                expires_at=expires_at,
+                status="pending"
+            )
+        
+        # Query existing registration from database (read-only)
+        async with pool.acquire() as conn:
+            existing = await conn.fetchrow(
+                "SELECT mobile_number, hash, is_active FROM onboarding_mobile WHERE mobile_number = $1",
+                normalized_mobile
+            )
+            
+            if not existing or not existing['is_active']:
+                raise HTTPException(
+                    status_code=404, 
+                    detail="Mobile number not registered. Use POST /onboarding/register to create a new registration."
+                )
+            
+            if not existing['hash']:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Registration incomplete. Please re-register using POST /onboarding/register."
+                )
+            
+            # Cache the hash for future reads
+            redis_client.setex(cache_key, 86400, existing['hash'])
+            
+            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            
+            logger.warning(f"GET /onboard/status/{mobile_number} - Deprecated endpoint used (DB query)")
+            
+            return GeoPrasidhOnboardingResponse(
+                mobile_number=mobile_number,  # Return original format with +
+                hash=existing['hash'],
+                expires_at=expires_at,
+                status="pending"
+            )
         
     except HTTPException:
         raise
