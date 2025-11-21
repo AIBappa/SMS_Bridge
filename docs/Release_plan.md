@@ -1,4 +1,4 @@
-The following picture shows the various aspects of the SMS_Bridge proposed for Production_2.
+The following system block diagram shows the various aspects of the SMS_Bridge proposed for Production_2.
 The objective is to have a production ready system with less of PostgreSQL and more of Redis to provide a faster experience to the user (Redis) plus cater for backup, reliability and audits.
 
 Legend is as follows:
@@ -11,6 +11,7 @@ Legend is as follows:
 <img width="1710" height="803" alt="Mobile_Validation_System" src="https://github.com/user-attachments/assets/a5f00579-e9e2-479a-97cb-0e3f8a256410" />
 
 The system caters to the following user case scenarios.
+
 Use case 1) The general workflow is from the user end, user sends details to onboard which include mobile number, device ID , email and the time of application.
 This information passes via CF , through a local tunnel to local Redis, where a hash is generated and fed back to the user alongwith a mobile number where hash can be sent and confirmed. This is supposed to be done within a timelimit.
 User then sends SMS to the recieving number with the Hash to confirm mobile number. Sending Hash from the same mobile number as that provided to generarate Hash will allow confirmation, plus costs for sending SMS from application end can be avoided.
@@ -25,3 +26,10 @@ were recieved and when power is resurrected, those SMSes can be pushed back on t
 to User over IP that mobile onboarding is currently paused due to server issue.
 
 User case 4) Local issues - Redis down but PostgreSQL still working. In this scenario, PostgreSQL has power down table to save local SMSes from mobile. These will be pushed to Redis when Redis is brought back on.
+
+Requirements for Local Server - Python core
+1) Have a UI for SMS_Settings table, so that these settings can be changed by user directly on local machine.
+2) Read SMS Recieved as per Swagger API call and add it to the Queue_input_sms table in Redis. This table is kept updated with the results of the various checks that the SMS (message + number) undergo.
+3) The checks are enabled as per the SMS_Settings table enable/disable check. If check disabled, the next enabled check shall be proceeded with. If check disabled, that field in Queue_input_sms should be "disabled". If one check fails, the next checks are not required and should be noted "N/A".
+4) If the hash recieved and the hash generated tally and their mobile numbers tally as well, the mobile is considered validated. Accordingly the row in the Queue_input_sms shall be updated.
+5) 
