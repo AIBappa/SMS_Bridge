@@ -82,6 +82,25 @@ components:
           redis: healthy
           batch_processor: running
 
+    OnboardRegisterRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 formatted mobile number
+        email:
+          type: string
+          format: email
+          description: Email address for onboarding
+        device_id:
+          type: string
+          description: Unique device identifier
+      required: [mobile_number, email, device_id]
+      example:
+        mobile_number: +9199XXYYZZAA
+        email: user@example.com
+        device_id: device_abc123xyz
+
     OnboardHashResponse:
       type: object
       properties:
@@ -96,16 +115,30 @@ components:
         generated_at:
           type: string
           format: date-time
+        user_deadline:
+          type: string
+          format: date-time
+          description: User-facing deadline (5 minutes from now)
+        user_timelimit_seconds:
+          type: integer
+          description: Seconds until user_deadline (typically 300)
         expires_at:
           type: string
           format: date-time
-      required: [status, mobile_number, hash]
+          description: System expiry time (24 hours from now)
+        redis_ttl_seconds:
+          type: integer
+          description: Redis TTL in seconds (typically 86400)
+      required: [status, mobile_number, hash, user_deadline, user_timelimit_seconds, expires_at, redis_ttl_seconds]
       example:
         status: success
-  mobile_number: +9199XXYYZZAA
+        mobile_number: +9199XXYYZZAA
         hash: a06f0b785d6613cadec3ed12c27e07615427bf1b79d091e9e8da22070ad14f7d
         generated_at: '2025-09-19T12:00:00Z'
+        user_deadline: '2025-09-19T12:05:00Z'
+        user_timelimit_seconds: 300
         expires_at: '2025-09-20T12:00:00Z'
+        redis_ttl_seconds: 86400
 
     OnboardHashError:
       type: object
@@ -200,18 +233,20 @@ components:
         processed_at: '2025-09-19T12:00:01Z'
 
 paths:
-  /onboard/register/{mobile_number}:
-    get:
+  /onboard/register:
+    post:
       summary: Generate or return onboarding hash for mobile number
-      parameters:
-        - in: path
-          name: mobile_number
-          required: true
-          schema:
-            type: string
-          description: E.164 formatted mobile number
+      description: >-
+        Accepts mobile number, email, and device_id to generate an onboarding hash.
+        Returns dual time windows: user_deadline (5 min) for user action, and expires_at (24h) for system retention.
       security:
         - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardRegisterRequest'
       responses:
         '200':
           description: Hash generated or existing hash returned
@@ -219,6 +254,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OnboardHashResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
           content:

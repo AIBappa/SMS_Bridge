@@ -1,505 +1,495 @@
-# SMS Bridge System - Complete Functionality Documentation
+# SMS Bridge System - Production_2 Complete Functionality Documentation
 
-This document provides comprehensive documentation for the SMS Bridge system, including all Python files functionality, database schema, configuration settings, deployment architecture, and system capabilities. It serves as the single source of truth for understanding the complete system.
+This document provides comprehensive documentation for the SMS Bridge Production_2 system, including Redis-first architecture, minimal PostgreSQL usage, configurable validation pipeline, dual-sync strategy, and admin UI for settings management.
 
-## System Overview
-The SMS Bridge is a production-grade, high-performance batch validation pipeline system that processes incoming SMS messages through a configurable validation pipeline. It features Redis deduplication, advanced batch processing with timeout logic, connection pooling, and comprehensive onboarding workflows with country code support.
+## System Overview - Production_2 Architecture
+
+The SMS Bridge Production_2 is a **Redis-first, high-performance SMS validation system** designed to minimize PostgreSQL dependency while providing fast user experience, reliable backup, and comprehensive audit trails. The system processes SMS onboarding requests and validation messages entirely in Redis, with periodic batch dumps to PostgreSQL for persistence and remote Supabase sync for validated mobiles only.
+
+### Core Design Principles
+1. **Redis-First Hot Path**: All validations execute against Redis data structures (O(1) lookups)
+2. **Minimal PostgreSQL**: Only 6 tables for configuration, audit, and backup (no hot path queries)
+3. **Dual TTL Strategy**: 24-hour Redis retention (TTL) with 5-minute user deadline (X)
+4. **Clubbed Writes**: Batch dumps every 120s (local) and 10s (Hetzner validated only)
+5. **Power-Down Resilience**: Automatic fallback to PostgreSQL during Redis failures
 
 ### Core Architecture Components
-- **FastAPI Server**: Multi-format SMS reception (JSON/form-encoded) with ultra-fast storage
-- **Advanced Batch Processor**: Configurable batch processing with timeout-based batching logic
-- **Sequential Validation Pipeline**: 6 configurable validation checks with country code support
-- **Onboarding System**: Complete mobile number registration and hash-based validation
-- **Database Layer**: PostgreSQL with structured mobile data storage and connection pooling
-- **Caching Layer**: Redis for deduplication and performance optimization
-- **Monitoring**: Health checks, metrics collection, and comprehensive logging
+- **FastAPI Server**: Multi-format request handling (JSON/form-encoded) with Redis-first processing
+- **Redis Queue System**: Three primary queues (Queue_onboarding_mobile, Queue_input_sms, Queue_validated_mobiles)
+- **Sequential Validation Pipeline**: 6 configurable checks (all Redis-based, no PostgreSQL in hot path)
+- **Onboarding System**: POST-based registration with email, device_id, and hash generation
+- **Dual Sync Strategy**: 10-second Hetzner sync (validated only), 120-second local sync (all data)
+- **Admin UI**: FastAPI-based settings management for runtime configuration
+- **Power-Down Store**: Automatic PostgreSQL fallback during Redis downtime
+
+
+## Redis Data Structures (Primary Data Store)
+
+### Queue Tables (HASHes)
+1. **queue_onboarding:{mobile}** - Onboarding request data
+   - Fields: mobile_number, email, device_id, hash, salt, country_code, local_mobile, request_timestamp, user_deadline, expires_at
+   - TTL: 86400 seconds (24 hours) - configurable via `onboarding_ttl_seconds`
+   - Purpose: Store onboarding requests pending SMS validation
+
+2. **queue_input_sms:{id}** - Incoming SMS with validation results
+   - Fields: id, mobile_number, device_id, sms_message, received_timestamp, country_code, local_mobile, mobile_check, duplicate_check, header_hash_check, count_check, foreign_number_check, blacklist_check, time_window_check, validation_status, failed_at_check
+   - TTL: None (persisted until batch dump)
+   - Purpose: Store all incoming SMS with sequential check results
+
+### Quick Lookup Keys
+3. **onboard_hash:{mobile}** - STRING mapping mobile to hash
+   - Value: Generated SHA-256 hash
+   - TTL: Same as queue_onboarding:{mobile}
+   - Purpose: Fast hash lookup during validation
+
+### Validation Data (SETs)
+4. **Queue_validated_mobiles** - SET of validated mobile+device pairs
+   - Format: "{mobile}:{device_id}"
+   - TTL: None (permanent until manual removal)
+   - Purpose: Duplicate detection (if combination exists, reject)
+
+5. **blacklist_mobiles** - SET of blacklisted mobile numbers
+   - Format: E.164 mobile number
+   - TTL: None (loaded from PostgreSQL by background worker)
+   - Purpose: Fast blacklist check
+
+### Counters (STRINGs with INCR)
+6. **sms_count:{mobile}** - INT counter for SMS per mobile
+   - Value: Count of SMS in 24h window
+   - TTL: 86400 seconds (24 hours)
+   - Purpose: Count check validation (auto-expires after 24h)
+
+7. **counter:queue_input_sms** - Auto-incrementing ID
+   - Value: Next available ID for queue_input_sms
+   - TTL: None (persisted to PostgreSQL periodically)
+   - Purpose: Unique ID generation
+
+8. **counter:queue_onboarding** - Auto-incrementing ID
+   - Value: Next available ID for queue_onboarding
+   - TTL: None (persisted to PostgreSQL periodically)
+   - Purpose: Unique ID generation
+
+### Settings Cache (STRINGs)
+9. **setting:{key}** - Cached settings from PostgreSQL
+   - Value: Setting value from sms_settings table
+   - TTL: 60 seconds
+   - Purpose: Performance optimization for frequent setting reads
+
+## PostgreSQL Tables (6 Tables - Configuration, Audit, Backup Only)
+
+### Table 1: input_sms (Audit Trail with Check Results)
+```sql
+CREATE TABLE input_sms (
+    id SERIAL PRIMARY KEY,
+    redis_id INTEGER NOT NULL,
+    mobile_number VARCHAR(15) NOT NULL,
+    country_code VARCHAR(5),
+    local_mobile VARCHAR(15),
+    sms_message TEXT NOT NULL,
+    received_timestamp TIMESTAMPTZ NOT NULL,
+    device_id VARCHAR(100),
+    mobile_check INTEGER DEFAULT 3,
+    duplicate_check INTEGER DEFAULT 3,
+    header_hash_check INTEGER DEFAULT 3,
+    count_check INTEGER DEFAULT 3,
+    foreign_number_check INTEGER DEFAULT 3,
+    blacklist_check INTEGER DEFAULT 3,
+    time_window_check INTEGER DEFAULT 3,
+    validation_status VARCHAR(20) DEFAULT 'pending',
+    failed_at_check VARCHAR(30),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+**Purpose**: Complete audit trail of all SMS with check results
+**Check Result Values**: 1=pass, 2=fail, 3=disabled, 4=N/A
+**Sync**: Batch dump every 120s from queue_input_sms (configurable)
+
+### Table 2: onboarding_mobile (Onboarding Audit)
+```sql
+CREATE TABLE onboarding_mobile (
+    id SERIAL PRIMARY KEY,
+    mobile_number VARCHAR(15) NOT NULL,
+    email VARCHAR(100),
+    device_id VARCHAR(100),
+    hash VARCHAR(64) NOT NULL,
+    salt VARCHAR(32) NOT NULL,
+    country_code VARCHAR(5),
+    local_mobile VARCHAR(15),
+    request_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    user_deadline TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    is_validated BOOLEAN DEFAULT FALSE,
+    validated_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+**Purpose**: Audit trail of onboarding requests
+**Sync**: Written during onboarding POST request
+
+### Table 3: blacklist_sms (Persistent Blacklist)
+```sql
+CREATE TABLE blacklist_sms (
+    mobile_number VARCHAR(15) PRIMARY KEY,
+    country_code VARCHAR(5),
+    local_mobile VARCHAR(15),
+    blacklisted_at TIMESTAMPTZ DEFAULT NOW(),
+    reason VARCHAR(100) DEFAULT 'threshold_exceeded',
+    message_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+**Purpose**: Permanent blacklist storage
+**Sync**: Loaded into Redis blacklist_mobiles SET every 300s (configurable)
+
+### Table 4: power_down_store (Redis Failure Backup)
+```sql
+CREATE TABLE power_down_store (
+    id SERIAL PRIMARY KEY,
+    mobile_number VARCHAR(15) NOT NULL,
+    sms_message TEXT NOT NULL,
+    received_timestamp TIMESTAMPTZ NOT NULL,
+    device_id VARCHAR(100),
+    stored_at TIMESTAMPTZ DEFAULT NOW(),
+    processed BOOLEAN DEFAULT FALSE,
+    processed_at TIMESTAMPTZ
+);
+```
+**Purpose**: Store incoming SMS when Redis is down
+**Sync**: Processed back to Redis when Redis recovers
+
+### Table 5: power_down_store_counters (Counter Persistence)
+```sql
+CREATE TABLE power_down_store_counters (
+    counter_name VARCHAR(50) PRIMARY KEY,
+    counter_value BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+**Purpose**: Persist Redis counter values for recovery
+**Sync**: Updated periodically during Redis operation
+
+### Table 6: sms_settings (UI-Configurable Settings)
+```sql
+CREATE TABLE sms_settings (
+    setting_key VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    setting_type VARCHAR(20) DEFAULT 'string',
+    category VARCHAR(50) DEFAULT 'general',
+    description TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+**Purpose**: Runtime configuration (all timing, thresholds, check toggles)
+**Categories**: general, sync, validation, thresholds, infrastructure, monitoring
+**Admin UI**: FastAPI-based UI for runtime updates (no restarts required)
+
+### Removed Tables (No Longer Needed)
+- **out_sms**: Replaced by Queue_validated_mobiles SET in Redis
+- **sms_monitor**: Merged into input_sms (check result columns)
+- **count_sms**: Replaced by sms_count:{mobile} counters in Redis
+- **system_settings**: Replaced by sms_settings table
 
 ## File Summaries
 
-### sms_server.py
-**Functionality**: Main FastAPI application that serves as the SMS receiver service and onboarding system. It handles incoming SMS via POST endpoint (supporting both JSON and form-encoded data), processes messages in batches, runs validation checks, and manages data flow between PostgreSQL and Redis.
+### core/sms_server.py
+FastAPI application with Production_2 endpoints and admin UI.
 
-**Key Features**:
-- **Ultra-fast SMS Reception**: POST `/sms/receive` endpoint with minimal processing - just stores raw SMS data to `input_sms` 
-- **Advanced Batch Processor**: Background async task implementing sophisticated batching logic:
-  - Reads `batch_size` and `batch_timeout` from system_settings table
-  - Queries `input_sms` for new rows where `uuid > last_processed_uuid` (sequential processing)
-  - **Intelligent Batching**: If rows < batch_size, waits for `batch_timeout` period while polling for new arrivals
-  - **Timeout Logic**: During timeout, checks every 100ms for new messages, processes immediately if batch_size reached
-  - **Atomic Checkpoint**: Updates `last_processed_uuid` atomically after successful batch processing
-- **Sequential Validation Pipeline**: Configurable validation checks with early exit on failures
-- **Country Code Processing**: Automatic extraction and structured storage (country_code + local_mobile)
-- **Redis Cache Integration**: Write-through caching with bulk warmup on startup
-- **Onboarding Workflows**: Complete mobile number registration and hash-based validation system
-- **Production Monitoring**: Health checks, comprehensive logging, and optional external backend forwarding
+**Key Functions**:
+- `POST /onboard/register` - Onboarding with email, device_id, dual time windows
+- `POST /sms/receive` - Incoming SMS processing with sequential validation
+- `GET /admin/settings/ui` - Admin UI for settings management
+- `GET /admin/settings/{key}` - Get individual setting value
+- `PUT /admin/settings/{key}` - Update individual setting with cache invalidation
+- `GET /health` - Health check with Redis/PostgreSQL status
 
-**Startup Conditions**: On application startup, it warms up the Redis cache with existing local mobile numbers from `out_sms` table and starts the advanced batch processor task.
+**Production_2 Updates**:
+- POST endpoint for onboarding (was GET with path param)
+- Email and device_id fields in onboarding request
+- Dual time window response (user_deadline vs expires_at)
+- Redis Queue_onboarding_mobile storage
+- Admin UI routes for sms_settings management
 
-**Process Frequency**: Advanced batch processor with timeout-based batching logic:
-- Processes batches continuously based on `batch_size` setting (default: 20 SMS)
-- Uses `batch_timeout` setting (default: 2.0 seconds) for incomplete batches
-- Sequential UUID processing using `last_processed_uuid` checkpoint
-- Timeout polling: If fewer than batch_size messages available, waits for timeout period checking for new arrivals every 100ms
+### core/redis_client.py
+Async Redis client with Queue management and settings cache.
 
-**Database Connections**:
-- **PostgreSQL Tables**: `input_sms`, `out_sms`, `sms_monitor`, `system_settings`, `onboarding_mobile`, `blacklist_sms`, `count_sms`
-- **Redis**: `out_sms_numbers` set for caching processed local mobile numbers
+**Key Functions**:
+- `add_to_queue_onboarding()` - Store onboarding data with dual TTL
+- `add_to_queue_input_sms()` - Store incoming SMS with check results
+- `mark_mobile_validated()` - Add to Queue_validated_mobiles SET
+- `get_setting_value()` - Get cached setting with 60s TTL
+- `invalidate_setting_cache()` - Clear setting cache on update
+- `get_next_id()` - Auto-incrementing ID generation
+- `update_check_result()` - Update validation check status
 
-**Onboarding Endpoints**:
-- `POST /onboarding/register` - Register mobile number and generate hash
-- `GET /onboarding/status/{mobile_number}` - Check onboarding status
-- `DELETE /onboarding/{mobile_number}` - Deactivate mobile number
+**Production_2 Updates**:
+- Queue management functions for Production_2 Redis schema
+- Settings cache with 60s TTL for performance
+- Dual TTL support (user_deadline and expires_at)
 
-### checks/mobile_utils.py
-**Functionality**: Utility functions for mobile number normalization and country code handling. Provides consistent mobile number processing across all validation checks.
+### core/background_workers.py
+Async background workers for batch dumps and sync operations.
 
-**Key Features**:
-- Normalizes mobile numbers to extract country code and local number
-- Supports multiple country codes from system settings
-- Handles various input formats (+9199XXYYZZAA, 9199XXYYZZAA, 99XXYYZZAA)
+**Key Functions**:
+- `dump_queue_input_sms_to_postgres()` - Batch dump to input_sms (every 120s)
+- `sync_validated_mobiles_to_hetzner()` - Sync to Supabase (every 10s, validated only)
+- `populate_blacklist_from_postgres()` - Load blacklist to Redis (every 300s)
+- `cleanup_expired_sorted_sets()` - Remove expired sorted set entries
+- `persist_counters_to_postgres()` - Backup Redis counters
+- `get_setting_value()` - Helper to read dynamic settings
 
-**Database Connections**:
-- **PostgreSQL Tables**: `system_settings` (for allowed country codes)
+**Production_2 Updates**:
+- All timing parameters from sms_settings (not hardcoded)
+- Dual sync strategy (10s Hetzner, 120s local)
+- Dynamic settings with Redis caching
 
-### checks/blacklist_check.py  
-**Functionality**: Spam prevention through sender frequency tracking. Implements threshold-based blacklisting with automatic count management and blacklist population.
+### core/checks/mobile_check.py
+E.164 format validation and country code extraction.
 
-**Validation Logic**:
-1. **Count Tracking**: Query `count_sms` table for sender's local mobile number message count
-2. **Count Increment**: Upsert operation to increment message count for the sender
-3. **Threshold Comparison**: Compare count against `blacklist_threshold` setting (default: 10)
-4. **Automatic Blacklisting**: If threshold exceeded, insert local mobile number into `blacklist_sms`
-5. **Blacklist Check**: Check if sender is already in `blacklist_sms` table
+**Returns**: (status_code, country_code, local_mobile, message)
+- Validates E.164 format (starts with +, 10-15 digits)
+- Extracts country_code and local_mobile
+- Configurable via `mobile_check_enabled` setting
 
-**Return Codes**:
-- 1 = Pass (message count below threshold AND not in blacklist)
-- 2 = Fail (threshold exceeded OR sender blacklisted)
+### core/checks/duplicate_check.py (Production_2 Updated)
+Redis-only duplicate detection using Queue_validated_mobiles SET.
 
-**Database Connections**:
-- **PostgreSQL Tables**: `system_settings` (blacklist_threshold), `count_sms` (count tracking), `blacklist_sms` (blacklist storage)
+**Returns**: (status_code, message)
+- Checks if {mobile}:{device_id} exists in Queue_validated_mobiles SET
+- NO PostgreSQL query (was querying out_sms table)
+- Configurable via `duplicate_check_enabled` setting
 
-### checks/duplicate_check.py
-**Functionality**: High-performance deduplication using Redis for O(1) lookup performance. Prevents processing of mobile numbers that have already sent valid SMS messages.
+### core/checks/header_hash_check.py
+Validates "ONBOARD:" prefix and hash match against queue_onboarding:{mobile}.
 
-**Validation Logic**:
-1. **Redis Lookup**: Execute `SISMEMBER` check against 'out_sms_numbers' Redis set
-2. **Mobile Number Check**: Uses normalized local mobile number (without country code) for consistency
-3. **Fast Decision**: O(1) performance for duplicate detection across millions of processed numbers
+**Returns**: (status_code, message)
+- Checks for "ONBOARD:" header
+- Validates hash against stored onboard_hash:{mobile}
+- Configurable via `header_hash_check_enabled` setting
 
-**Return Codes**:
-- 1 = Pass (local mobile number NOT in Redis set - first time sender)
-- 2 = Fail (local mobile number EXISTS in Redis set - duplicate)
+### core/checks/count_check.py (NEW - Production_2)
+Redis-only SMS count validation per mobile (24h window).
 
-**Database Connections**:
-- **Redis**: `out_sms_numbers` set (stores processed local mobile numbers for deduplication)
+**Returns**: (status_code, message)
+- Increments sms_count:{mobile} counter with 24h TTL
+- Checks against threshold from `count_check_threshold` setting
+- NO PostgreSQL dependency (was using count_sms table)
+- Configurable via `count_check_enabled` setting
 
-### checks/foreign_number_check.py
-**Functionality**: Validates if the sender's mobile number is from an allowed country based on country code. Supports configurable allowed country codes and can be enabled/disabled via settings.
+### core/checks/foreign_number_check.py
+Country code validation against allowed list.
 
-**Database Connections**:
-- **PostgreSQL Tables**: `system_settings` (for allowed country codes and validation toggle)
+**Returns**: (status_code, message)
+- Validates country_code against allowed_country_codes from sms_settings
+- Configurable via `foreign_number_check_enabled` setting
 
-### checks/header_hash_check.py
-**Functionality**: Consolidated validation for SMS header format (ONBOARD:) and hash verification. Validates message format, extracts hash, checks against stored hash in onboarding_mobile table for the local mobile number. This check combines the original header_check and hash_length_check functionality from the initial requirements.
+### core/checks/blacklist_check.py (Production_2 Updated)
+Redis-only blacklist check using blacklist_mobiles SET.
 
-**Validation Logic**:
-1. **Header Format Validation**: Checks for exact "ONBOARD:" prefix in SMS message
-2. **Hash Format Validation**: Validates 64-character hexadecimal hash format  
-3. **Hash Verification**: Compares extracted hash against stored hash in onboarding_mobile table
-4. **Mobile Number Lookup**: Uses normalized local mobile number for consistent hash verification
+**Returns**: (status_code, message)
+- Checks if mobile exists in blacklist_mobiles SET
+- NO PostgreSQL query (was querying blacklist_sms table)
+- Blacklist loaded by background worker
+- Configurable via `blacklist_check_enabled` setting
 
-**Return Codes**:
-- 1 = Pass (header format valid AND hash matches stored value)
-- 2 = Fail (invalid format OR hash mismatch OR mobile number not found)
-- 3 = Skipped (check disabled in system settings)
+### core/checks/time_window_check.py
+Validates SMS received within user_deadline.
 
-**Database Connections**:
-- **PostgreSQL Tables**: `onboarding_mobile` (for hash verification and mobile lookup)
+**Returns**: (status_code, message)
+- Checks received_timestamp against user_deadline from queue_onboarding
+- Configurable via `time_window_check_enabled` setting
 
-### checks/mobile_check.py
-**Functionality**: Validates that the sender's local mobile number exists in the onboarding_mobile table and is active. Uses structured mobile data for consistent validation.
+## Sequential Validation Pipeline (Redis-Only)
 
-**Database Connections**:
-- **PostgreSQL Tables**: `onboarding_mobile` (for mobile number verification)
+All checks execute in Redis following this sequence:
 
-### checks/time_window_check.py
-**Functionality**: Time-based validation to ensure SMS is sent within acceptable time window after onboarding registration. Prevents replay attacks and stale onboarding requests.
-
-**Validation Logic**:
-1. **Onboarding Lookup**: Query `onboarding_mobile` table for local mobile number registration record  
-2. **Timestamp Comparison**: Compare SMS `received_timestamp` vs onboarding `request_timestamp`
-3. **Window Validation**: Calculate time difference and compare against `validation_time_window` setting (default: 3600 seconds)
-4. **Boundary Check**: Ensure SMS timestamp is after onboarding timestamp and within allowed window
-
-**Return Codes**:
-- 1 = Pass (SMS received within valid time window after onboarding)
-- 2 = Fail (time window exceeded OR SMS timestamp before onboarding OR mobile not found)
-- 3 = Skipped (check disabled OR no onboarding record found)
-
-**Database Connections**:
-- **PostgreSQL Tables**: `system_settings` (validation_time_window setting), `onboarding_mobile` (request timestamp lookup)
-
-## System Configuration & Settings
-
-### Database Configuration (system_settings table)
-The system uses dynamic configuration via the `system_settings` table, supporting runtime parameter changes without restarts:
-
-**Batch Processing Settings:**
-- `batch_size`: Number of SMS messages to process per batch (default: 20)
-- `batch_timeout`: Timeout in seconds for incomplete batches (default: 2.0)
-- `last_processed_uuid`: Checkpoint for sequential processing (updated atomically)
-
-**Validation Settings:**
-- `check_sequence`: Ordered array of validation checks to execute
-- `check_enabled`: Per-check enable/disable configuration (JSON format)
-- `validation_time_window`: Time window in seconds for time_window_check (default: 3600)
-- `blacklist_threshold`: Message count threshold for blacklisting (default: 10)
-
-**Country Code Support:**
-- `allowed_country_codes`: JSON array of permitted country codes (default: ["91", "1", "44", "61", "33", "49"])
-- `foreign_number_validation`: Enable/disable country code validation (default: true)
-
-**Connection & Performance:**
-- `pgbouncer_pool_size`: Database connection pool size (default: 10)
-- `max_database_retries`: Retry attempts for database operations (default: 3)
-- `parallel_workers`: Processing parallelism level (default: 1)
-- `redis_host`, `redis_port`: Redis connection configuration
-
-**System Management:**
-- `maintenance_mode`: System-wide maintenance mode toggle (default: false)
-- `log_level`: Logging verbosity (default: INFO)
-- `out_sms_cache_ttl`: Redis cache TTL in seconds (default: 604800)
-
-**Onboarding Configuration:**
-- `hash_salt_length`: Salt length for hash generation (default: 16)
-- `onboarding_expiry_hours`: Onboarding request expiry (default: 24)
-
-## Startup Conditions & Deployment
-When the Ansible K3s playbook (`setup_sms_bridge_k3s.yml`) executes:
-1. K3s containers for PostgreSQL, Redis, PgBouncer, Prometheus, Grafana, and the SMS receiver are created and started
-2. Database schema is initialized with all 7 tables including onboarding_mobile and structured mobile data columns
-3. System settings are inserted with default values for all configuration parameters
-4. SMS server container starts, triggering the FastAPI app startup event
-5. Redis cache is warmed up with existing local mobile numbers from out_sms table
-6. Advanced batch processor background task begins with timeout-based batching logic
-7. Health endpoints and onboarding endpoints become available for monitoring
-8. Test application becomes available on port 3002 with tabbed interface for SMS testing and mobile onboarding
-
-## Process Frequencies & Performance
-- **Advanced Batch Processing**: Continuous operation with intelligent batching:
-  - Immediate processing when `batch_size` reached
-  - Timeout-based processing for incomplete batches (`batch_timeout` seconds)
-  - 100ms polling interval during timeout period
-  - Sequential UUID processing with atomic checkpoint updates
-- **Validation Pipeline**: Executed per SMS during batch processing with early exit on failures
-- **Cache Warmup**: Once on startup with bulk loading from `out_sms` table
-- **Health Checks**: On-demand via HTTP endpoint (`/health`)
-- **Connection Pooling**: Managed via PgBouncer for optimized database performance
-
-## Validation Pipeline Flow
-
-```mermaid
-graph TD
-    A[SMS Received: +9199XXYYZZAA<br/>ONBOARD:hash123...] --> B[Extract & Store<br/>country_code=91<br/>local_mobile=99XXYYZZAA]
-    B --> C[Batch Processor<br/>Sequential UUID Processing]
-    C --> D[Start Validation Pipeline]
-    
-    D --> E[1. Foreign Number Check<br/>91 ∈ allowed_codes?]
-    E -->|FAIL| Z[Mark Invalid<br/>Stop Pipeline]
-    E -->|PASS| F[2. Blacklist Check<br/>count ≤ threshold?]
-    
-    F -->|FAIL| Z
-    F -->|PASS| G[3. Duplicate Check<br/>99XXYYZZAA ∉ Redis?]
-    
-    G -->|FAIL| Z  
-    G -->|PASS| H[4. Header Hash Check<br/>ONBOARD: + hash valid?]
-    
-    H -->|FAIL| Z
-    H -->|PASS| I[5. Mobile Check<br/>99XXYYZZAA ∈ onboarding?]
-    
-    I -->|FAIL| Z
-    I -->|PASS| J[6. Time Window Check<br/>SMS within window?]
-    
-    J -->|FAIL| Z
-    J -->|PASS| K[All Checks Pass<br/>Mark Valid]
-    
-    K --> L[Insert to out_sms<br/>Add to Redis Cache<br/>Update last_processed_uuid]
-    Z --> M[Update sms_monitor<br/>Record Failed Check<br/>Update last_processed_uuid]
+```
+Incoming SMS → Queue_input_sms:{id}
+               ↓
+1. mobile_check (E.164 validation)
+               ↓ (pass)
+2. duplicate_check (Queue_validated_mobiles SET)
+               ↓ (pass)
+3. header_hash_check (ONBOARD: + hash match)
+               ↓ (pass)
+4. count_check (sms_count:{mobile} counter)
+               ↓ (pass)
+5. foreign_number_check (country code validation)
+               ↓ (pass)
+6. blacklist_check (blacklist_mobiles SET)
+               ↓ (pass)
+7. time_window_check (within user_deadline)
+               ↓ (pass)
+     → validation_status = "passed"
+     → Add to Queue_validated_mobiles SET
+     → Batch dump to input_sms (120s)
+     → Sync to Hetzner (10s, validated only)
 ```
 
-## System Architecture Diagram
+**Check Status Codes**:
+- 1 = Pass
+- 2 = Fail (stop processing, mark failed_at_check)
+- 3 = Disabled (skip to next check)
+- 4 = N/A (previous check failed, don't run)
 
-```mermaid
-graph TD
-    A[sms_server.py] --> B[PostgreSQL]
-    A --> C[Redis]
-    A --> D[Validation Checks]
-    A --> M[Onboarding System]
-    
-    B --> B1[input_sms<br/>+country_code+local_mobile]
-    B --> B2[out_sms<br/>+country_code+local_mobile]
-    B --> B3[sms_monitor<br/>+country_code+local_mobile]
-    B --> B4[system_settings]
-    B --> B5[count_sms<br/>+country_code+local_mobile]
-    B --> B6[blacklist_sms<br/>+country_code+local_mobile]
-    B --> B7[onboarding_mobile]
-    
-    C --> C1[out_sms_numbers set<br/>local mobile numbers]
-    
-    D --> E[blacklist_check.py]
-    D --> F[duplicate_check.py]
-    D --> G[foreign_number_check.py]
-    D --> H[header_hash_check.py]
-    D --> I[mobile_check.py]
-    D --> J[time_window_check.py]
-    D --> K[mobile_utils.py]
-    
-    M --> M1[POST /onboarding/register]
-    M --> M2[GET /onboarding/status]
-    M --> M3[DELETE /onboarding/deactivate]
-    
-    E --> B4
-    E --> B5
-    E --> B6
-    
-    F --> C1
-    
-    G --> B4
-    H --> B7
-    I --> B7
-    J --> B4
-    J --> B7
-    
-    K --> B4
-    
-    N[External CF Backend] --> A
-    A --> O[Prometheus/Grafana]
-    
-    P[Test App<br/>port 3002] --> A
-    P --> P1[SMS Testing Tab]
-    P --> P2[Mobile Onboarding Tab]
-```
+**Configuration**:
+- Each check can be enabled/disabled via sms_settings
+- Thresholds dynamically loaded from sms_settings
+- All settings cached in Redis (60s TTL) for performance
 
-## External Backend Integration
+## Dual Time Window Strategy
 
-### Overview
-The SMS Bridge system integrates with an external Cloudflare (CF) backend for bidirectional communication. The system receives inbound GET requests for hash verification and sends outbound POST requests with validated SMS data. This integration enables secure, authenticated communication between the local K3s deployment and the external CF backend.
+Production_2 implements two distinct time windows:
 
-### Configuration
-External backend integration is configured through Ansible Vault (`vault.yml`):
-- `cf_backend_url`: HTTPS endpoint for the external CF backend
-- `cf_api_key`: Bearer token for API authentication
+### User Deadline (X) - 5 Minutes
+- **Setting**: `user_timelimit_seconds` (default: 300)
+- **Purpose**: User-facing deadline for SMS submission
+- **Response Fields**: `user_deadline` (ISO timestamp), `user_timelimit_seconds` (integer)
+- **Usage**: Displayed to users, enforced by time_window_check
+- **Example**: "Send SMS within 5 minutes"
 
-### Inbound Communication (GET Requests)
-The external CF backend can query the SMS Bridge for hash verification:
+### Redis TTL (Audit Retention) - 24 Hours
+- **Setting**: `onboarding_ttl_seconds` (default: 86400)
+- **Purpose**: System-level audit retention period
+- **Response Fields**: `expires_at` (ISO timestamp), `redis_ttl_seconds` (integer)
+- **Usage**: Automatic Redis expiry (no worker needed)
+- **Example**: Data automatically deleted after 24 hours
 
-**Endpoint**: `GET /hash/{mobile_number}`
-- **Purpose**: Verify if a mobile number has been onboarded and retrieve its hash
-- **Parameters**: 
-  - `mobile_number`: Full mobile number (e.g., +9199XXYYZZAA)
-- **Response**: JSON with onboarding status and hash (if found)
-- **Authentication**: Bearer token required
+**Why Dual Windows?**
+- User needs short deadline (urgency, security)
+- System needs long retention (audit, recovery, investigation)
 
-### Outbound Communication (POST Requests)
-When SMS messages pass all validation checks, they are forwarded to the external CF backend:
+## Dual Sync Strategy
 
-**Endpoint**: Configurable via `cf_backend_url` in vault.yml
-**Method**: POST
-**Authentication**: Bearer token (`cf_api_key`)
-**Content-Type**: `application/json`
+### Hetzner Supabase Sync (Validated Only)
+- **Frequency**: Every 10 seconds (configurable via `hetzner_sync_interval_seconds`)
+- **Data**: ONLY validated mobiles (validation_status='passed')
+- **Source**: input_sms table WHERE validation_status='passed'
+- **Purpose**: Remote backup of successful onboardings
+- **Worker**: `sync_validated_mobiles_to_hetzner()`
 
-#### JSON Payload Structure
-```json
-{
-  "mobile_number": "+9199XXYYZZAA",
-  "country_code": "91",
-  "local_mobile": "99XXYYZZAA",
-  "message": "ONBOARD:abc123def456...",
-  "received_timestamp": "2024-01-15T10:30:45.123456",
-  "validation_results": {
-    "foreign_number_check": 1,
-    "blacklist_check": 1,
-    "duplicate_check": 1,
-    "header_hash_check": 1,
-    "mobile_check": 1,
-    "time_window_check": 1
-  },
-  "batch_id": "uuid-string",
-  "processed_at": "2024-01-15T10:30:45.123456"
-}
-```
+### Local PostgreSQL Sync (All Data)
+- **Frequency**: Every 120 seconds (configurable via `local_sync_interval_seconds`)
+- **Data**: ALL SMS (audit trail)
+- **Source**: queue_input_sms (Redis) → input_sms (PostgreSQL)
+- **Purpose**: Complete audit trail, compliance, investigation
+- **Worker**: `dump_queue_input_sms_to_postgres()`
 
-#### Field Descriptions
-- `mobile_number`: Full international mobile number with country code
-- `country_code`: Extracted country code (e.g., "91" for India)
-- `local_mobile`: Mobile number without country code
-- `message`: Original SMS message content
-- `received_timestamp`: When the SMS was received by the system
-- `validation_results`: Object containing results from each validation check (1=pass, 2=fail, 3=skipped)
-- `batch_id`: UUID of the processing batch
-- `processed_at`: Timestamp when validation was completed
+**Why Dual Sync?**
+- Hetzner: Minimize bandwidth/cost (validated only, frequent)
+- Local: Complete audit (all data, less frequent)
 
-#### Alternative Form-Encoded Format
-The system also supports form-encoded data for compatibility:
-```
-mobile_number=+9199XXYYZZAA&country_code=91&local_mobile=99XXYYZZAA&message=ONBOARD:abc123...&received_timestamp=2024-01-15T10:30:45.123456&validation_results={"foreign_number_check":1,"blacklist_check":1,"duplicate_check":1,"header_hash_check":1,"mobile_check":1,"time_window_check":1}&batch_id=uuid-string&processed_at=2024-01-15T10:30:45.123456
-```
+## Admin UI for Settings Management
 
-### Error Handling & Retry Logic
-- **HTTP Errors**: Automatic retry with exponential backoff (max 3 attempts)
-- **Authentication Failures**: Logged with alert notification
-- **Network Timeouts**: Configurable timeout with retry mechanism
-- **Invalid Responses**: Logged for debugging and monitoring
+FastAPI-based web interface for runtime configuration.
 
-### Security Considerations
-- All communication uses HTTPS with certificate validation
-- Bearer token authentication for all requests
-- Request/response logging (without sensitive data)
-- Rate limiting protection on inbound endpoints
-- Input validation on all received data
+### Endpoints
+- **GET /admin/settings/ui** - HTML interface with category grouping
+- **GET /admin/settings/{key}** - Get individual setting value
+- **PUT /admin/settings/{key}** - Update setting with cache invalidation
 
-### Monitoring & Observability
-- Prometheus metrics for request success/failure rates
-- Grafana dashboards for backend integration health
-- Structured logging for all external communications
-- Alert notifications for integration failures
+### UI Features
+- **Category Grouping**: general, sync, validation, thresholds, infrastructure, monitoring
+- **Type-Based Inputs**: number (integer), checkbox (boolean), text (string), textarea (json)
+- **AJAX Updates**: Real-time updates without page reload
+- **Cache Invalidation**: Automatic Redis cache invalidation on update
+- **No Restarts**: All settings applied dynamically
 
-## Complete Database Schema
+### Settings Categories
 
-### Core SMS Processing Tables
-- **input_sms**: Stores incoming SMS messages with structured mobile data
-  - Primary storage for all received SMS (sender_number, country_code, local_mobile)
-  - UUID primary key for sequential processing
-  - Timestamp tracking for time window validation
+**General**:
+- onboarding_ttl_seconds (24h)
+- user_timelimit_seconds (5min)
+- hash_salt_length (16)
 
-- **out_sms**: Stores validated outgoing SMS messages with structured mobile data
-  - Contains only SMS that passed all validation checks
-  - Used for Redis cache warmup and deduplication
-  - Includes forwarding status and cloud backend integration
+**Sync**:
+- hetzner_sync_interval_seconds (10s)
+- local_sync_interval_seconds (120s)
+- blacklist_check_interval_seconds (300s)
 
-- **sms_monitor**: Comprehensive validation tracking and processing metadata
-  - Tracks individual validation check results (0=not_done, 1=pass, 2=fail, 3=skipped)
-  - Processing timestamps and batch tracking
-  - Overall status tracking (pending, valid, invalid, skipped)
-  - Failed check identification and retry count management
+**Validation** (Toggles):
+- mobile_check_enabled
+- duplicate_check_enabled
+- header_hash_check_enabled
+- count_check_enabled
+- foreign_number_check_enabled
+- blacklist_check_enabled
+- time_window_check_enabled
 
-### Configuration & Management Tables
-- **system_settings**: Dynamic configuration management
-  - Runtime-configurable parameters without application restarts
-  - Batch processing, validation, connection, and performance settings
-  - JSON-formatted complex settings (check_sequence, check_enabled, allowed_country_codes)
+**Thresholds**:
+- count_check_threshold (5)
+- blacklist_threshold (10)
 
-### Validation Support Tables
-- **count_sms**: Message frequency tracking per local mobile number
-  - Supports blacklist threshold enforcement
-  - Includes country code for comprehensive tracking
-  - Upsert operations for efficient count management
+## Deployment Architecture
 
-- **blacklist_sms**: Blacklisted mobile numbers storage
-  - Local mobile numbers exceeding threshold limits
-  - Country code tracking for audit trails
-  - Automatic population via blacklist validation check
+### Components
+1. **FastAPI Server** (core/sms_server.py) - Port 8080
+2. **Redis Server** - Port 6379 (localhost)
+3. **PostgreSQL + PgBouncer** - Connection pooling
+4. **Cloudflare Tunnel** - Public HTTPS endpoint
+5. **Background Workers** - Async tasks for sync/cleanup
+6. **Hetzner Supabase** - Remote backup (validated only)
 
-### Onboarding & Authentication Tables  
-- **onboarding_mobile**: Mobile number registration and hash validation
-  - Hash generation with configurable salt length
-  - Request timestamp for time window validation
-  - Active/inactive status management
-  - Mobile number normalization and country code extraction
+### Power-Down Resilience
+1. **Redis Down**:
+   - Incoming SMS → power_down_store table (direct PostgreSQL write)
+   - Counters restored from power_down_store_counters on recovery
+   - Background worker processes power_down_store back to Redis
 
-## Production Features & Capabilities
+2. **PostgreSQL Down**:
+   - Redis continues operation (hot path unaffected)
+   - Batch dumps fail (logged, retried)
+   - System continues processing (Redis-first design)
 
-### Core Processing Features
-- **Ultra-fast SMS Reception**: FastAPI endpoint optimized for high-throughput SMS ingestion
-- **Advanced Batch Processing**: Timeout-based batching logic with intelligent batch sizing
-- **Sequential Validation Pipeline**: Configurable 6-step validation with early exit optimization
-- **Country Code Support**: Structured storage and validation of international mobile numbers
-- **Form Data Compatibility**: Dual support for JSON and form-encoded data from mobile applications
+3. **Hetzner Down**:
+   - Local processing unaffected
+   - Sync failures logged, retried
+   - Data in local PostgreSQL (can manual sync later)
 
-### Data Management & Performance
-- **Redis Deduplication**: O(1) lookup performance using `out_sms_numbers` set
-- **Connection Pooling**: PgBouncer integration for optimized database performance
-- **Atomic Checkpointing**: Sequential UUID processing with atomic `last_processed_uuid` updates  
-- **Retry Logic**: Configurable database retry mechanisms with exponential backoff
-- **Cache Warmup**: Startup optimization with bulk Redis cache population
+## Performance Characteristics
 
-### Validation & Security
-- **Configurable Validation Checks**: Runtime-configurable check sequence and enable/disable
-- **Blacklist Management**: Automatic threshold-based blacklisting with country code support
-- **Hash-based Authentication**: Secure onboarding with salt-based hash generation
-- **Time Window Validation**: Configurable time-based validation for onboarding workflows
-- **Foreign Number Control**: Configurable country code whitelist/blacklist functionality
+### Hot Path (Redis-Only)
+- **Onboarding**: < 10ms (HASH write + STRING write + TTL)
+- **Validation Pipeline**: < 50ms (7 checks, all O(1) Redis operations)
+- **No PostgreSQL**: Zero database queries in validation path
 
-### Monitoring & Operations
-- **Comprehensive Logging**: Configurable log levels with rotating file handlers
-- **Health Check Endpoints**: System status monitoring and health verification
-- **Maintenance Mode**: System-wide maintenance toggle for operational control
-- **Metrics Integration**: Performance monitoring with processing statistics
-- **Error Handling**: Fault-tolerant processing with graceful error recovery
+### Batch Operations
+- **Local Dump**: 120s interval, batch size configurable
+- **Hetzner Sync**: 10s interval, only validated mobiles
+- **Blacklist Load**: 300s interval, full SET replacement
 
-### Deployment & Infrastructure
-- **Containerized Deployment**: K3s-based container orchestration with Ansible automation
-- **Multi-format Mobile Support**: Handles various international number formats (+9199XXYYZZAA, 9199XXYYZZAA, 99XXYYZZAA)
-- **Onboarding System**: Complete mobile number registration and validation workflow
-- **Test Interface**: Mobile-friendly test application with tabbed SMS and onboarding interface
-- **External Integration**: Optional cloud backend forwarding for validated SMS messages
+### Scalability
+- **Redis**: Handle 10K+ req/s per core
+- **PostgreSQL**: Minimal load (batch writes only)
+- **PgBouncer**: Connection pooling for efficiency
+- **Horizontal**: Add Redis replicas for read scaling
 
-### Scalability Design
-- **Batch Size Optimization**: Configurable batch sizing for load management
-- **Parallel Processing**: Configurable worker parallelism (default: 1, expandable)
-- **Database Optimization**: Proper indexing and connection pooling for high-volume processing
-- **Redis Caching**: Write-through cache strategy for optimal read performance
-- **Sequential Processing**: UUID-ordered processing ensuring message ordering and consistency
+## Monitoring and Observability
 
-This architecture delivers a production-grade SMS processing system capable of handling high-volume SMS traffic (10M+ messages) with robust validation, comprehensive monitoring, and fault-tolerant operation.
+### Health Check (GET /health)
+Returns status of:
+- Redis connectivity
+- PostgreSQL connectivity
+- Background worker status
 
-## Current Implementation Status
+### Metrics (Prometheus)
+- Request rates per endpoint
+- Validation check pass/fail rates
+- Redis operation latencies
+- PostgreSQL batch dump durations
+- Queue sizes (queue_input_sms, Queue_validated_mobiles)
 
-### ✅ Fully Implemented Features
-All core functionality described above is **production-ready and fully implemented**:
-- Multi-format SMS reception with country code processing
-- Advanced batch processor with timeout-based batching logic  
-- Complete 6-step validation pipeline with configurable checks
-- Onboarding system with hash-based mobile number validation
-- K3s deployment with containerized infrastructure
-- Test interface with mobile-friendly SMS and onboarding tabs
-- Form data compatibility for direct mobile app integration
+### Logging
+- Structured logging with log_level from sms_settings
+- Check results logged per SMS
+- Background worker status updates
+- Error tracking with stack traces
 
-### 🚀 Future Enhancement Opportunities
+---
 
-The system foundation is solid and production-ready. Future enhancements could include:
-
-**Phase 1: Advanced Analytics (High Priority)**
-- Real-time Grafana dashboards with country-wise SMS metrics
-- Performance monitoring with processing latency and throughput tracking
-- Country-specific analytics and validation success/failure rates
-
-**Phase 2: Enhanced Security & Fraud Detection (High Priority)**  
-- Advanced fraud detection with rate limiting per country/mobile
-- Suspicious pattern detection and geolocation validation
-- Dynamic blacklist thresholds and whitelist management
-- Time-based hash expiration for enhanced security
-
-**Phase 3: Scalability & Performance (Medium Priority)**
-- Horizontal scaling with load-balanced SMS receiver instances
-- Database sharding by country code or mobile number ranges  
-- Redis clustering for distributed caching at scale
-- Queue-based processing (Kafka/RabbitMQ) for async workflows
-
-**Phase 4: Integration & API Enhancements (Medium Priority)**
-- API gateway integration with JWT/OAuth2 authentication
-- Webhook support for real-time SMS event notifications
-- Third-party telecom provider API integrations
-- Business intelligence platform integrations
-
-**Phase 5: Advanced Features (Low Priority)**
-- Multi-language SMS content support with Unicode handling
-- Machine learning integration for anomaly detection and spam classification
-- Predictive analytics for capacity planning and volume forecasting
-
-**Phase 6: Compliance & Governance (Medium Priority)**
-- GDPR compliance with data privacy and retention policies
-- Comprehensive audit logging and compliance reporting
-- Data encryption (at-rest and in-transit) and backup strategies
-
-The current implementation provides a robust foundation that can be enhanced incrementally based on operational needs and growth requirements.
+**Production_2 Architecture Benefits**:
+1. **Performance**: Redis-first design eliminates PostgreSQL bottleneck
+2. **Scalability**: O(1) operations, horizontal scaling ready
+3. **Reliability**: Power-down resilience, dual sync strategy
+4. **Auditability**: Complete audit trail in PostgreSQL
+5. **Configurability**: Runtime settings via admin UI
+6. **Cost-Efficiency**: Hetzner sync only validated mobiles (not all data)
