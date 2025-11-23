@@ -216,21 +216,275 @@ async def sms_monitor_logger(batch_size: int = 100, interval: int = 30):
         if pool:
             await pool.close()
 
-async def start_background_workers():
-    """Start all background workers"""
-    logger.info("Starting background workers...")
+async def get_setting_value(pool, setting_key: str, default: str = None) -> str:
+    """
+    Get setting value from sms_settings table with Redis cache (60s TTL).
     
-    # Read configuration from environment or use defaults
+    Args:
+        pool: PostgreSQL connection pool
+        setting_key: Setting name
+        default: Default value if not found
+        
+    Returns:
+        Setting value or default
+        
+    Flow:
+        1. Check Redis cache (setting:{key} with 60s TTL)
+        2. If miss, query PostgreSQL sms_settings table
+        3. Cache result in Redis
+        4. Return value
+    """
+    try:
+        # Check Redis cache first
+        cached_value = await redis_pool.get_setting_value(setting_key)
+        if cached_value is not None:
+            return cached_value
+        
+        # Cache miss - query PostgreSQL
+        async with pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT setting_value FROM sms_settings WHERE setting_key = $1",
+                setting_key
+            )
+        
+        if value is None:
+            logger.warning(f"Setting '{setting_key}' not found in database, using default: {default}")
+            value = default
+        
+        # Cache in Redis for 60s
+        if value is not None:
+            await redis_pool.cache_setting_value(setting_key, value, ttl=60)
+        
+        return value or default
+    except Exception as e:
+        logger.error(f"Failed to get setting '{setting_key}': {e}", exc_info=True)
+        return default
+
+
+async def dump_queue_input_sms_to_postgres(pool):
+    """
+    Production_2 Worker: Batch dump queue_input_sms to PostgreSQL input_sms table.
+    
+    Frequency: Configurable via local_sync_interval_seconds (default: 120s)
+    Process:
+        1. Get all queue_input_sms:{id} keys from Redis
+        2. Batch insert to input_sms table with check results
+        3. Delete processed keys from Redis
+    """
+    logger.info("Starting dump_queue_input_sms_to_postgres worker")
+    
+    while True:
+        try:
+            # Get interval from settings (dynamic)
+            interval_str = await get_setting_value(pool, 'local_sync_interval_seconds', '120')
+            interval = int(interval_str)
+            
+            # Scan for queue_input_sms keys
+            keys = await redis_pool.scan("queue_input_sms:*")
+            
+            if keys:
+                logger.info(f"Dumping {len(keys)} SMS records to PostgreSQL")
+                
+                batch = []
+                for key in keys:
+                    try:
+                        data = await redis_pool.hgetall(key)
+                        if data:
+                            batch.append((
+                                int(data.get('id', 0)),
+                                data.get('mobile_number', ''),
+                                data.get('country_code', ''),
+                                data.get('local_mobile', ''),
+                                data.get('sms_message', ''),
+                                data.get('received_timestamp', ''),
+                                data.get('device_id', ''),
+                                int(data.get('mobile_check', 3)),
+                                int(data.get('duplicate_check', 3)),
+                                int(data.get('header_hash_check', 3)),
+                                int(data.get('count_check', 3)),
+                                int(data.get('foreign_number_check', 3)),
+                                int(data.get('blacklist_check', 3)),
+                                int(data.get('time_window_check', 3)),
+                                data.get('validation_status', 'pending'),
+                                data.get('failed_at_check', '')
+                            ))
+                    except Exception as e:
+                        logger.error(f"Error processing {key}: {e}")
+                
+                if batch:
+                    async with pool.acquire() as conn:
+                        await conn.executemany(
+                            """
+                            INSERT INTO input_sms (
+                                redis_id, mobile_number, country_code, local_mobile,
+                                sms_message, received_timestamp, device_id,
+                                mobile_check, duplicate_check, header_hash_check,
+                                count_check, foreign_number_check, blacklist_check,
+                                time_window_check, validation_status, failed_at_check
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                            ON CONFLICT (redis_id) DO NOTHING
+                            """,
+                            batch
+                        )
+                    logger.info(f"Dumped {len(batch)} SMS records to input_sms table")
+                    
+                    # Delete processed keys
+                    await redis_pool.delete(*keys)
+                    logger.info(f"Deleted {len(keys)} processed keys from Redis")
+            
+        except Exception as e:
+            logger.error(f"Error in dump_queue_input_sms_to_postgres: {e}", exc_info=True)
+        
+        await asyncio.sleep(interval)
+
+
+async def sync_validated_mobiles_to_hetzner(pool):
+    """
+    Production_2 Worker: Sync validated mobiles to Hetzner Supabase.
+    
+    Frequency: Configurable via hetzner_sync_interval_seconds (default: 10s)
+    Data: ONLY validated mobiles (validation_status='passed')
+    Process:
+        1. Query input_sms WHERE validation_status='passed' AND synced_to_hetzner=false
+        2. Sync to Hetzner Supabase via HTTP/Supabase client
+        3. Mark as synced_to_hetzner=true
+    
+    Note: Hetzner sync implementation depends on Supabase client setup.
+    """
+    logger.info("Starting sync_validated_mobiles_to_hetzner worker")
+    
+    while True:
+        try:
+            # Get interval from settings (dynamic)
+            interval_str = await get_setting_value(pool, 'hetzner_sync_interval_seconds', '10')
+            interval = int(interval_str)
+            
+            # TODO: Query input_sms for unsynced validated mobiles
+            # TODO: Sync to Hetzner Supabase (requires Supabase client configuration)
+            # TODO: Mark as synced_to_hetzner=true
+            
+            logger.debug(f"Hetzner sync check (interval={interval}s)")
+            
+        except Exception as e:
+            logger.error(f"Error in sync_validated_mobiles_to_hetzner: {e}", exc_info=True)
+        
+        await asyncio.sleep(interval)
+
+
+async def populate_blacklist_from_postgres(pool):
+    """
+    Production_2 Worker: Load blacklist from PostgreSQL to Redis.
+    
+    Frequency: Configurable via blacklist_check_interval_seconds (default: 300s)
+    Process:
+        1. Query blacklist_sms table
+        2. Load all mobile numbers into blacklist_mobiles SET
+        3. Replace existing SET (full refresh)
+    """
+    logger.info("Starting populate_blacklist_from_postgres worker")
+    
+    while True:
+        try:
+            # Get interval from settings (dynamic)
+            interval_str = await get_setting_value(pool, 'blacklist_check_interval_seconds', '300')
+            interval = int(interval_str)
+            
+            # Query blacklist_sms table
+            async with pool.acquire() as conn:
+                blacklist = await conn.fetch("SELECT mobile_number FROM blacklist_sms")
+            
+            if blacklist:
+                # Clear existing blacklist SET
+                await redis_pool.delete('blacklist_mobiles')
+                
+                # Add all blacklisted mobiles
+                mobiles = [row['mobile_number'] for row in blacklist]
+                await redis_pool.sadd('blacklist_mobiles', *mobiles)
+                
+                logger.info(f"Loaded {len(mobiles)} blacklisted mobiles to Redis")
+            else:
+                logger.info("No blacklisted mobiles found")
+            
+        except Exception as e:
+            logger.error(f"Error in populate_blacklist_from_postgres: {e}", exc_info=True)
+        
+        await asyncio.sleep(interval)
+
+
+async def persist_counters_to_postgres(pool):
+    """
+    Production_2 Worker: Backup Redis counter values to PostgreSQL.
+    
+    Frequency: Every 60 seconds
+    Process:
+        1. Get counter:queue_input_sms and counter:queue_onboarding values
+        2. Update power_down_store_counters table
+        3. Used for Redis recovery after power-down
+    """
+    logger.info("Starting persist_counters_to_postgres worker")
+    
+    while True:
+        try:
+            # Get counter values from Redis
+            input_sms_counter = await redis_pool.get('counter:queue_input_sms')
+            onboarding_counter = await redis_pool.get('counter:queue_onboarding')
+            
+            # Update PostgreSQL
+            async with pool.acquire() as conn:
+                if input_sms_counter:
+                    await conn.execute(
+                        """
+                        INSERT INTO power_down_store_counters (counter_name, counter_value, updated_at)
+                        VALUES ('queue_input_sms', $1, NOW())
+                        ON CONFLICT (counter_name) DO UPDATE
+                        SET counter_value = EXCLUDED.counter_value, updated_at = NOW()
+                        """,
+                        int(input_sms_counter)
+                    )
+                
+                if onboarding_counter:
+                    await conn.execute(
+                        """
+                        INSERT INTO power_down_store_counters (counter_name, counter_value, updated_at)
+                        VALUES ('queue_onboarding', $1, NOW())
+                        ON CONFLICT (counter_name) DO UPDATE
+                        SET counter_value = EXCLUDED.counter_value, updated_at = NOW()
+                        """,
+                        int(onboarding_counter)
+                    )
+            
+            logger.debug(f"Persisted counters: input_sms={input_sms_counter}, onboarding={onboarding_counter}")
+            
+        except Exception as e:
+            logger.error(f"Error in persist_counters_to_postgres: {e}", exc_info=True)
+        
+        await asyncio.sleep(60)
+
+
+async def start_background_workers():
+    """Start all background workers (Production_2)"""
+    logger.info("Starting Production_2 background workers...")
+    
+    # Get database pool
+    pool = await get_db_pool()
+    
+    # Read legacy configuration from environment (for backward compatibility)
     abuse_threshold = int(os.getenv('ABUSE_THRESHOLD', 10))
     abuse_interval = int(os.getenv('ABUSE_CHECK_INTERVAL', 60))
     monitor_batch_size = int(os.getenv('MONITOR_BATCH_SIZE', 100))
     monitor_interval = int(os.getenv('MONITOR_LOG_INTERVAL', 30))
     
-    # Start workers as background tasks
+    # Start legacy workers (if needed)
     asyncio.create_task(abuse_detector_worker(abuse_threshold, abuse_interval))
     asyncio.create_task(sms_monitor_logger(monitor_batch_size, monitor_interval))
     
-    logger.info("Background workers started successfully")
+    # Start Production_2 workers
+    asyncio.create_task(dump_queue_input_sms_to_postgres(pool))
+    asyncio.create_task(sync_validated_mobiles_to_hetzner(pool))
+    asyncio.create_task(populate_blacklist_from_postgres(pool))
+    asyncio.create_task(persist_counters_to_postgres(pool))
+    
+    logger.info("All background workers started successfully")
 
 # Entrypoint for workers (run in separate process if needed)
 if __name__ == "__main__":

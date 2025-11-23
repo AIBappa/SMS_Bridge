@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Bridge Settings - Admin Panel</title>
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>SMS Bridge - Production_2 Settings</h1>
+            <p class="subtitle">Runtime configuration for SMS validation system</p>
+        </header>
+
+        <div id="alert-container"></div>
+
+        <!-- General Settings -->
+        <section class="settings-category">
+            <h2>General Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="onboarding_ttl_seconds">
+                        <span class="setting-name">Onboarding TTL (seconds)</span>
+                        <span class="setting-description">Redis retention for onboarding entries (24h default)</span>
+                    </label>
+                    <input type="number" id="onboarding_ttl_seconds" name="onboarding_ttl_seconds" 
+                           value="{{ settings.get('onboarding_ttl_seconds', '86400') }}" 
+                           data-type="integer" min="0">
+                </div>
+
+                <div class="setting-item">
+                    <label for="user_timelimit_seconds">
+                        <span class="setting-name">User Deadline (seconds)</span>
+                        <span class="setting-description">User-facing deadline for SMS submission (5min default)</span>
+                    </label>
+                    <input type="number" id="user_timelimit_seconds" name="user_timelimit_seconds" 
+                           value="{{ settings.get('user_timelimit_seconds', '300') }}" 
+                           data-type="integer" min="0">
+                </div>
+
+                <div class="setting-item">
+                    <label for="hash_salt_length">
+                        <span class="setting-name">Hash Salt Length</span>
+                        <span class="setting-description">Salt length for hash generation</span>
+                    </label>
+                    <input type="number" id="hash_salt_length" name="hash_salt_length" 
+                           value="{{ settings.get('hash_salt_length', '16') }}" 
+                           data-type="integer" min="8" max="64">
+                </div>
+            </div>
+        </section>
+
+        <!-- Sync Settings -->
+        <section class="settings-category">
+            <h2>Sync Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="hetzner_sync_interval_seconds">
+                        <span class="setting-name">Hetzner Sync Interval (seconds)</span>
+                        <span class="setting-description">Frequency for syncing validated mobiles to Supabase (10s default)</span>
+                    </label>
+                    <input type="number" id="hetzner_sync_interval_seconds" name="hetzner_sync_interval_seconds" 
+                           value="{{ settings.get('hetzner_sync_interval_seconds', '10') }}" 
+                           data-type="integer" min="1">
+                </div>
+
+                <div class="setting-item">
+                    <label for="local_sync_interval_seconds">
+                        <span class="setting-name">Local Sync Interval (seconds)</span>
+                        <span class="setting-description">Frequency for batch dump to local PostgreSQL (120s default)</span>
+                    </label>
+                    <input type="number" id="local_sync_interval_seconds" name="local_sync_interval_seconds" 
+                           value="{{ settings.get('local_sync_interval_seconds', '120') }}" 
+                           data-type="integer" min="1">
+                </div>
+
+                <div class="setting-item">
+                    <label for="blacklist_check_interval_seconds">
+                        <span class="setting-name">Blacklist Reload Interval (seconds)</span>
+                        <span class="setting-description">Frequency for reloading blacklist from PostgreSQL (300s default)</span>
+                    </label>
+                    <input type="number" id="blacklist_check_interval_seconds" name="blacklist_check_interval_seconds" 
+                           value="{{ settings.get('blacklist_check_interval_seconds', '300') }}" 
+                           data-type="integer" min="1">
+                </div>
+            </div>
+        </section>
+
+        <!-- Validation Check Toggles -->
+        <section class="settings-category">
+            <h2>Validation Check Toggles</h2>
+            <div class="settings-grid">
+                <div class="setting-item checkbox-item">
+                    <label for="mobile_check_enabled">
+                        <input type="checkbox" id="mobile_check_enabled" name="mobile_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('mobile_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Mobile Check</span>
+                        <span class="setting-description">E.164 format validation</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="duplicate_check_enabled">
+                        <input type="checkbox" id="duplicate_check_enabled" name="duplicate_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('duplicate_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Duplicate Check</span>
+                        <span class="setting-description">Check Queue_validated_mobiles SET</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="header_hash_check_enabled">
+                        <input type="checkbox" id="header_hash_check_enabled" name="header_hash_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('header_hash_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Header/Hash Check</span>
+                        <span class="setting-description">Validate ONBOARD: prefix and hash</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="count_check_enabled">
+                        <input type="checkbox" id="count_check_enabled" name="count_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('count_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Count Check</span>
+                        <span class="setting-description">SMS count threshold validation</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="foreign_number_check_enabled">
+                        <input type="checkbox" id="foreign_number_check_enabled" name="foreign_number_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('foreign_number_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Foreign Number Check</span>
+                        <span class="setting-description">Country code validation</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="blacklist_check_enabled">
+                        <input type="checkbox" id="blacklist_check_enabled" name="blacklist_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('blacklist_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Blacklist Check</span>
+                        <span class="setting-description">Check blacklist_mobiles SET</span>
+                    </label>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="time_window_check_enabled">
+                        <input type="checkbox" id="time_window_check_enabled" name="time_window_check_enabled" 
+                               data-type="boolean" 
+                               {% if settings.get('time_window_check_enabled', 'true') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Time Window Check</span>
+                        <span class="setting-description">Validate within user_deadline</span>
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <!-- Validation Thresholds -->
+        <section class="settings-category">
+            <h2>Validation Thresholds</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="count_check_threshold">
+                        <span class="setting-name">Count Check Threshold</span>
+                        <span class="setting-description">Max SMS per mobile in 24h window (5 default)</span>
+                    </label>
+                    <input type="number" id="count_check_threshold" name="count_check_threshold" 
+                           value="{{ settings.get('count_check_threshold', '5') }}" 
+                           data-type="integer" min="1">
+                </div>
+
+                <div class="setting-item">
+                    <label for="blacklist_threshold">
+                        <span class="setting-name">Blacklist Threshold</span>
+                        <span class="setting-description">Count to trigger permanent blacklist (10 default)</span>
+                    </label>
+                    <input type="number" id="blacklist_threshold" name="blacklist_threshold" 
+                           value="{{ settings.get('blacklist_threshold', '10') }}" 
+                           data-type="integer" min="1">
+                </div>
+            </div>
+        </section>
+
+        <!-- Infrastructure Settings -->
+        <section class="settings-category">
+            <h2>Infrastructure Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="redis_host">
+                        <span class="setting-name">Redis Host</span>
+                        <span class="setting-description">Redis server hostname/IP</span>
+                    </label>
+                    <input type="text" id="redis_host" name="redis_host" 
+                           value="{{ settings.get('redis_host', 'localhost') }}" 
+                           data-type="string">
+                </div>
+
+                <div class="setting-item">
+                    <label for="redis_port">
+                        <span class="setting-name">Redis Port</span>
+                        <span class="setting-description">Redis server port</span>
+                    </label>
+                    <input type="number" id="redis_port" name="redis_port" 
+                           value="{{ settings.get('redis_port', '6379') }}" 
+                           data-type="integer" min="1" max="65535">
+                </div>
+
+                <div class="setting-item">
+                    <label for="pgbouncer_pool_size">
+                        <span class="setting-name">PgBouncer Pool Size</span>
+                        <span class="setting-description">PostgreSQL connection pool size</span>
+                    </label>
+                    <input type="number" id="pgbouncer_pool_size" name="pgbouncer_pool_size" 
+                           value="{{ settings.get('pgbouncer_pool_size', '10') }}" 
+                           data-type="integer" min="1">
+                </div>
+            </div>
+        </section>
+
+        <!-- Monitoring Settings -->
+        <section class="settings-category">
+            <h2>Monitoring Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label for="log_level">
+                        <span class="setting-name">Log Level</span>
+                        <span class="setting-description">Application log level</span>
+                    </label>
+                    <select id="log_level" name="log_level" data-type="string">
+                        <option value="DEBUG" {% if settings.get('log_level', 'INFO') == 'DEBUG' %}selected{% endif %}>DEBUG</option>
+                        <option value="INFO" {% if settings.get('log_level', 'INFO') == 'INFO' %}selected{% endif %}>INFO</option>
+                        <option value="WARNING" {% if settings.get('log_level', 'INFO') == 'WARNING' %}selected{% endif %}>WARNING</option>
+                        <option value="ERROR" {% if settings.get('log_level', 'INFO') == 'ERROR' %}selected{% endif %}>ERROR</option>
+                    </select>
+                </div>
+
+                <div class="setting-item checkbox-item">
+                    <label for="maintenance_mode">
+                        <input type="checkbox" id="maintenance_mode" name="maintenance_mode" 
+                               data-type="boolean" 
+                               {% if settings.get('maintenance_mode', 'false') == 'true' %}checked{% endif %}>
+                        <span class="setting-name">Maintenance Mode</span>
+                        <span class="setting-description">Reject new requests during maintenance</span>
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <!-- Advanced Settings -->
+        <section class="settings-category">
+            <h2>Advanced Settings</h2>
+            <div class="settings-grid">
+                <div class="setting-item full-width">
+                    <label for="allowed_country_codes">
+                        <span class="setting-name">Allowed Country Codes</span>
+                        <span class="setting-description">JSON array of allowed country codes</span>
+                    </label>
+                    <textarea id="allowed_country_codes" name="allowed_country_codes" 
+                              data-type="json" rows="3">{{ settings.get('allowed_country_codes', '["91", "1", "44", "61", "33", "49"]') }}</textarea>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // Auto-save functionality with AJAX
+        const settingInputs = document.querySelectorAll('input, select, textarea');
+        const alertContainer = document.getElementById('alert-container');
+
+        function showAlert(message, type = 'success') {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            alertContainer.appendChild(alert);
+            
+            setTimeout(() => {
+                alert.style.opacity = '0';
+                setTimeout(() => alert.remove(), 300);
+            }, 3000);
+        }
+
+        async function updateSetting(key, value, type) {
+            try {
+                const response = await fetch(`/admin/settings/${key}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ value: value })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showAlert(`✓ ${key} updated successfully`, 'success');
+                    return true;
+                } else {
+                    const error = await response.json();
+                    showAlert(`✗ Failed to update ${key}: ${error.detail}`, 'error');
+                    return false;
+                }
+            } catch (error) {
+                showAlert(`✗ Network error: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        settingInputs.forEach(input => {
+            const originalValue = input.type === 'checkbox' ? input.checked : input.value;
+            
+            input.addEventListener('change', async (e) => {
+                const key = e.target.name;
+                const type = e.target.dataset.type;
+                let value;
+
+                if (type === 'boolean') {
+                    value = e.target.checked ? 'true' : 'false';
+                } else if (type === 'integer') {
+                    value = e.target.value;
+                } else if (type === 'json') {
+                    try {
+                        JSON.parse(e.target.value);
+                        value = e.target.value;
+                    } catch (error) {
+                        showAlert(`✗ Invalid JSON for ${key}`, 'error');
+                        e.target.value = originalValue;
+                        return;
+                    }
+                } else {
+                    value = e.target.value;
+                }
+
+                await updateSetting(key, value, type);
+            });
+
+            // For text inputs, debounce updates
+            if (input.tagName === 'INPUT' && input.type === 'text') {
+                let timeout;
+                input.addEventListener('input', (e) => {
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => {
+                        e.target.dispatchEvent(new Event('change'));
+                    }, 1000);
+                });
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 's') {
+                e.preventDefault();
+                showAlert('Settings are auto-saved on change', 'info');
+            }
+        });
+    </script>
+</body>
+</html>

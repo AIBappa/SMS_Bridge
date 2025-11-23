@@ -881,3 +881,260 @@ VALIDATION_FUNCTIONS = {
     'mobile': validate_mobile_check,
     'time_window': validate_time_window_check
 }
+
+
+# ========================================
+# Production_2 Endpoints
+# ========================================
+
+class OnboardRegisterRequest(BaseModel):
+    """Production_2 onboarding request with email and device_id"""
+    mobile_number: str
+    email: str
+    device_id: str
+
+
+class OnboardHashResponse(BaseModel):
+    """Production_2 onboarding response with dual time windows"""
+    status: str
+    mobile_number: str
+    hash: str
+    generated_at: str
+    user_deadline: str
+    user_timelimit_seconds: int
+    expires_at: str
+    redis_ttl_seconds: int
+
+
+@app.post("/onboard/register", response_model=OnboardHashResponse)
+async def register_mobile_production_2(request: OnboardRegisterRequest, api_key: str = Depends(verify_api_key)):
+    """
+    Production_2 POST endpoint for mobile onboarding.
+    
+    Changes from legacy GET endpoint:
+    - POST instead of GET (with request body)
+    - Includes email and device_id fields
+    - Returns dual time windows (user_deadline vs expires_at)
+    - Stores in Redis queue_onboarding:{mobile} HASH
+    - Writes audit to onboarding_mobile table
+    """
+    try:
+        # Normalize mobile number
+        normalized_mobile = normalize_mobile_number(request.mobile_number)
+        
+        # Validate mobile number format (10 digits)
+        if not re.match(r'^\d{10}$', normalized_mobile):
+            raise HTTPException(status_code=400, detail="Invalid mobile number format (expected 10 digits)")
+        
+        # Extract country code and local mobile
+        mobile_with_prefix = request.mobile_number
+        country_code = ''
+        if mobile_with_prefix.startswith('+'):
+            mobile_with_prefix = mobile_with_prefix[1:]
+            if len(mobile_with_prefix) > 10:
+                country_code = mobile_with_prefix[:-10]
+        
+        # REDIS-FIRST CHECKS
+        
+        # Check if already validated (duplicate check)
+        composite_key = f"{mobile_with_prefix}:{request.device_id}"
+        if await redis_pool.sismember('Queue_validated_mobiles', composite_key):
+            raise HTTPException(status_code=409, detail="Mobile+device already validated")
+        
+        # Check if blacklisted
+        if await redis_pool.sismember('blacklist_mobiles', mobile_with_prefix):
+            raise HTTPException(status_code=403, detail="Mobile number is blacklisted")
+        
+        # Check if hash already exists (within TTL window)
+        existing_hash = await redis_pool.get(f'onboard_hash:{mobile_with_prefix}')
+        if existing_hash:
+            # Get existing data from queue_onboarding
+            queue_data = await redis_pool.hgetall(f'queue_onboarding:{mobile_with_prefix}')
+            if queue_data:
+                return OnboardHashResponse(
+                    status="success",
+                    mobile_number=request.mobile_number,
+                    hash=existing_hash,
+                    generated_at=queue_data.get('request_timestamp', datetime.now(timezone.utc).isoformat()),
+                    user_deadline=queue_data.get('user_deadline', ''),
+                    user_timelimit_seconds=int(queue_data.get('user_timelimit_seconds', 300)),
+                    expires_at=queue_data.get('expires_at', ''),
+                    redis_ttl_seconds=int(queue_data.get('redis_ttl_seconds', 86400))
+                )
+        
+        # Generate new hash
+        pool = await get_db_pool()
+        
+        # Get settings from sms_settings table (with Redis cache)
+        from core.background_workers import get_setting_value
+        
+        salt_length = int(await get_setting_value(pool, 'hash_salt_length', '16'))
+        user_timelimit_seconds = int(await get_setting_value(pool, 'user_timelimit_seconds', '300'))
+        redis_ttl_seconds = int(await get_setting_value(pool, 'onboarding_ttl_seconds', '86400'))
+        
+        # Generate salt and hash
+        salt = secrets.token_hex(salt_length // 2)
+        data_to_hash = f"ONBOARD:{mobile_with_prefix}{salt}"
+        computed_hash = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()
+        
+        # Calculate timestamps
+        now = datetime.now(timezone.utc)
+        request_timestamp = now.isoformat()
+        user_deadline = (now + timedelta(seconds=user_timelimit_seconds)).isoformat()
+        expires_at = (now + timedelta(seconds=redis_ttl_seconds)).isoformat()
+        
+        # Store in Redis queue_onboarding:{mobile}
+        from datetime import timedelta
+        await redis_pool.add_to_queue_onboarding(
+            mobile_number=mobile_with_prefix,
+            email=request.email,
+            device_id=request.device_id,
+            hash_value=computed_hash,
+            salt=salt,
+            country_code=country_code,
+            local_mobile=normalized_mobile,
+            request_timestamp=request_timestamp,
+            user_deadline=user_deadline,
+            expires_at=expires_at,
+            user_timelimit_seconds=user_timelimit_seconds,
+            redis_ttl_seconds=redis_ttl_seconds
+        )
+        
+        # Write audit to PostgreSQL onboarding_mobile table
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO onboarding_mobile (
+                    mobile_number, email, device_id, hash, salt,
+                    country_code, local_mobile, request_timestamp,
+                    user_deadline, expires_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                """,
+                mobile_with_prefix, request.email, request.device_id, computed_hash, salt,
+                country_code, normalized_mobile, now, 
+                now + timedelta(seconds=user_timelimit_seconds),
+                now + timedelta(seconds=redis_ttl_seconds)
+            )
+        
+        logger.info(f"Onboarding registered: {mobile_with_prefix} (email={request.email}, device={request.device_id})")
+        
+        return OnboardHashResponse(
+            status="success",
+            mobile_number=request.mobile_number,
+            hash=computed_hash,
+            generated_at=request_timestamp,
+            user_deadline=user_deadline,
+            user_timelimit_seconds=user_timelimit_seconds,
+            expires_at=expires_at,
+            redis_ttl_seconds=redis_ttl_seconds
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in register_mobile_production_2: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ========================================
+# Admin UI Endpoints (Production_2)
+# ========================================
+
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+
+# Mount static files and templates
+app.mount("/static", StaticFiles(directory="core/static"), name="static")
+templates = Jinja2Templates(directory="core/templates")
+
+
+@app.get("/admin/settings/ui", response_class=HTMLResponse)
+async def admin_settings_ui(request: Request):
+    """
+    Admin UI for sms_settings management.
+    Displays all settings grouped by category with type-based inputs.
+    """
+    try:
+        pool = await get_db_pool()
+        
+        # Get all settings from sms_settings table
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT setting_key, setting_value FROM sms_settings ORDER BY category, setting_key")
+        
+        settings = {row['setting_key']: row['setting_value'] for row in rows}
+        
+        return templates.TemplateResponse("sms_settings.html", {
+            "request": request,
+            "settings": settings
+        })
+        
+    except Exception as e:
+        logger.error(f"Error loading admin settings UI: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to load settings UI")
+
+
+class SettingUpdateRequest(BaseModel):
+    """Request model for updating a setting"""
+    value: str
+
+
+@app.get("/admin/settings/{setting_key}")
+async def get_setting_value(setting_key: str):
+    """
+    Get individual setting value.
+    Returns cached value if available (60s TTL).
+    """
+    try:
+        pool = await get_db_pool()
+        from core.background_workers import get_setting_value as get_setting
+        
+        value = await get_setting(pool, setting_key)
+        
+        if value is None:
+            raise HTTPException(status_code=404, detail=f"Setting '{setting_key}' not found")
+        
+        return {"setting_key": setting_key, "value": value}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting setting '{setting_key}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get setting")
+
+
+@app.put("/admin/settings/{setting_key}")
+async def update_setting_value(setting_key: str, request: SettingUpdateRequest):
+    """
+    Update individual setting value.
+    Invalidates Redis cache after update.
+    """
+    try:
+        pool = await get_db_pool()
+        
+        # Update in PostgreSQL
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE sms_settings 
+                SET setting_value = $1, updated_at = NOW()
+                WHERE setting_key = $2
+                """,
+                request.value, setting_key
+            )
+        
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail=f"Setting '{setting_key}' not found")
+        
+        # Invalidate Redis cache
+        await redis_pool.invalidate_setting_cache(setting_key)
+        
+        logger.info(f"Updated setting: {setting_key} = {request.value}")
+        
+        return {"status": "success", "setting_key": setting_key, "value": request.value}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating setting '{setting_key}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update setting")
