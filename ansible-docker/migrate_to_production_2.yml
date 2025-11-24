@@ -313,13 +313,19 @@
           POSTGRES_PASSWORD: "{{ pg_password }}"
           POSTGRES_DB: "{{ pg_db }}"
 
+    - name: Wait for PostgreSQL container to initialize
+      pause:
+        seconds: 10
+
     - name: Wait for PostgreSQL to be ready
       shell: |
-        for i in {1..30}; do
-          if docker exec postgres pg_isready -U {{ pg_user }}; then
+        for i in {1..60}; do
+          if docker exec postgres pg_isready -U {{ pg_user }} -h localhost 2>/dev/null; then
+            echo "PostgreSQL is ready"
             exit 0
           fi
-          sleep 2
+          echo "Waiting for PostgreSQL... attempt $i/60"
+          sleep 3
         done
         exit 1
       register: pg_ready
