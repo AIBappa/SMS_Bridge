@@ -138,8 +138,11 @@
           
           -- Step 2: Create new Production_2 tables
           
-          -- Create input_sms with new structure (merged from input_sms + sms_monitor)
-          CREATE TABLE IF NOT EXISTS input_sms_new (
+          -- Drop old input_sms completely (data will be recreated from Redis)
+          DROP TABLE IF EXISTS input_sms CASCADE;
+          
+          -- Create input_sms with new Production_2 structure
+          CREATE TABLE input_sms (
               id SERIAL PRIMARY KEY,
               redis_id INTEGER NOT NULL,
               mobile_number VARCHAR(15) NOT NULL,
@@ -160,23 +163,6 @@
               created_at TIMESTAMPTZ DEFAULT NOW()
           );
           
-          -- Migrate existing input_sms data to new structure
-          INSERT INTO input_sms_new (
-              mobile_number, sms_message, received_timestamp, 
-              country_code, local_mobile, redis_id, created_at
-          )
-          SELECT 
-              sender_number, sms_message, received_timestamp,
-              country_code, local_mobile, 
-              ROW_NUMBER() OVER (ORDER BY created_at) as redis_id,
-              created_at
-          FROM input_sms
-          ON CONFLICT DO NOTHING;
-          
-          -- Drop old input_sms and rename new one
-          DROP TABLE IF EXISTS input_sms CASCADE;
-          ALTER TABLE input_sms_new RENAME TO input_sms;
-          
           -- Create indexes
           CREATE INDEX IF NOT EXISTS idx_input_redis_id ON input_sms (redis_id);
           CREATE INDEX IF NOT EXISTS idx_input_mobile ON input_sms (mobile_number);
@@ -184,26 +170,43 @@
           CREATE INDEX IF NOT EXISTS idx_input_received_timestamp ON input_sms (received_timestamp);
           CREATE INDEX IF NOT EXISTS idx_input_country_local ON input_sms (country_code, local_mobile);
           
-          -- Update onboarding_mobile table structure
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS email VARCHAR(100);
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS device_id VARCHAR(100);
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS user_deadline TIMESTAMPTZ;
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS is_validated BOOLEAN DEFAULT FALSE;
-          ALTER TABLE onboarding_mobile ADD COLUMN IF NOT EXISTS validated_at TIMESTAMPTZ;
+          -- Recreate onboarding_mobile table with Production_2 structure
+          DROP TABLE IF EXISTS onboarding_mobile CASCADE;
+          CREATE TABLE onboarding_mobile (
+              id SERIAL PRIMARY KEY,
+              mobile_number VARCHAR(15) NOT NULL,
+              email VARCHAR(100),
+              device_id VARCHAR(100),
+              hash VARCHAR(64) NOT NULL,
+              request_timestamp TIMESTAMPTZ NOT NULL,
+              user_deadline TIMESTAMPTZ,
+              expires_at TIMESTAMPTZ,
+              is_validated BOOLEAN DEFAULT FALSE,
+              validated_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+          );
           
-          -- Update indexes for onboarding_mobile
-          CREATE INDEX IF NOT EXISTS idx_onboard_mobile ON onboarding_mobile (mobile_number);
-          CREATE INDEX IF NOT EXISTS idx_onboard_hash ON onboarding_mobile (hash);
-          CREATE INDEX IF NOT EXISTS idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
-          CREATE INDEX IF NOT EXISTS idx_onboard_device ON onboarding_mobile (device_id);
+          -- Create indexes for onboarding_mobile
+          CREATE INDEX idx_onboard_mobile ON onboarding_mobile (mobile_number);
+          CREATE INDEX idx_onboard_hash ON onboarding_mobile (hash);
+          CREATE INDEX idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
+          CREATE INDEX idx_onboard_device ON onboarding_mobile (device_id);
           
-          -- Update blacklist_sms table structure
-          ALTER TABLE blacklist_sms ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+          -- Recreate blacklist_sms table with Production_2 structure
+          DROP TABLE IF EXISTS blacklist_sms CASCADE;
+          CREATE TABLE blacklist_sms (
+              id SERIAL PRIMARY KEY,
+              mobile_number VARCHAR(15) NOT NULL UNIQUE,
+              country_code VARCHAR(5),
+              local_mobile VARCHAR(15),
+              reason TEXT,
+              blacklisted_at TIMESTAMPTZ DEFAULT NOW(),
+              created_at TIMESTAMPTZ DEFAULT NOW()
+          );
           
           -- Create indexes for blacklist_sms
-          CREATE INDEX IF NOT EXISTS idx_blacklist_country_local ON blacklist_sms (country_code, local_mobile);
-          CREATE INDEX IF NOT EXISTS idx_blacklist_blacklisted_at ON blacklist_sms (blacklisted_at);
+          CREATE INDEX idx_blacklist_country_local ON blacklist_sms (country_code, local_mobile);
+          CREATE INDEX idx_blacklist_blacklisted_at ON blacklist_sms (blacklisted_at);
           
           -- Create power_down_store table
           CREATE TABLE IF NOT EXISTS power_down_store (
@@ -269,14 +272,28 @@
               ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)')
           ON CONFLICT (setting_key) DO NOTHING;
           
-          -- Step 3: Drop obsolete tables (commented for safety - uncomment if confirmed)
-          -- DROP TABLE IF EXISTS out_sms CASCADE;
-          -- DROP TABLE IF EXISTS sms_monitor CASCADE;
-          -- DROP TABLE IF EXISTS count_sms CASCADE;
-          -- DROP TABLE IF EXISTS system_settings CASCADE;
+          -- Step 3: Drop obsolete tables
+          DROP TABLE IF EXISTS out_sms CASCADE;
+          DROP TABLE IF EXISTS sms_monitor CASCADE;
+          DROP TABLE IF EXISTS count_sms CASCADE;
+          DROP TABLE IF EXISTS system_settings CASCADE;
           
-          -- Step 4: Verify migration
-          SELECT 'Migration completed successfully' as status;
+          -- Step 4: Verify migration - Check table count
+          DO $$
+          DECLARE
+            table_count INTEGER;
+          BEGIN
+            SELECT COUNT(*) INTO table_count 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE';
+            
+            IF table_count = 6 THEN
+              RAISE NOTICE 'Migration successful: 6 tables created';
+            ELSE
+              RAISE EXCEPTION 'Migration failed: Expected 6 tables, found %', table_count;
+            END IF;
+          END $$;
           
           COMMIT;
 
@@ -378,6 +395,18 @@
         src: ../core/static/
         dest: "{{ project_dir }}/core/static/"
 
+    - name: Create Dockerfile for Production_2
+      copy:
+        dest: "{{ project_dir }}/Dockerfile"
+        content: |
+          FROM python:3.11-slim
+          WORKDIR /app
+          COPY core/requirements.txt /app/core/requirements.txt
+          RUN pip install --no-cache-dir -r core/requirements.txt
+          COPY core/ /app/core/
+          EXPOSE 8080
+          CMD ["uvicorn", "core.sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
+
     # ===================================
     # Phase 6: Restart All Containers
     # ===================================
@@ -414,13 +443,13 @@
           - "6432:6432"
         env:
           DB_HOST: postgres
-          DB_PORT: 5432
+          DB_PORT: "5432"
           DB_USER: "{{ pg_user }}"
           DB_PASSWORD: "{{ pg_password }}"
           DB_NAME: "{{ pg_db }}"
           POOL_MODE: transaction
-          MAX_CLIENT_CONN: 1000
-          DEFAULT_POOL_SIZE: 10
+          MAX_CLIENT_CONN: "1000"
+          DEFAULT_POOL_SIZE: "10"
 
     - name: Rebuild SMS receiver Docker image with Production_2 code
       community.docker.docker_image:
@@ -455,7 +484,7 @@
           POSTGRES_PASSWORD: "{{ pg_password }}"
           POSTGRES_PORT: "6432"
           REDIS_HOST: redis
-          REDIS_PORT: 6379
+          REDIS_PORT: "6379"
           REDIS_PASSWORD: "{{ redis_password }}"
           HASH_SECRET_KEY: "{{ hash_secret_key }}"
           LOG_LEVEL: INFO

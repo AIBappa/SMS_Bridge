@@ -1,0 +1,560 @@
+---
+- name: Migrate SMS Bridge to Production_2 Schema (K3s)
+  hosts: localhost
+  become: no
+  
+  collections:
+    - kubernetes.core
+    - community.general
+
+  vars_files:
+    - ../vault.yml
+
+  vars:
+    pg_user: "postgres"
+    pg_db: "sms_bridge"
+    project_dir: "/home/{{ ansible_user_id }}/sms_bridge"
+    namespace: "sms-bridge"
+    backup_dir: "{{ project_dir }}/backups"
+    backup_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
+  tasks:
+    - name: Display migration start message
+      debug:
+        msg: |
+          ========================================
+          SMS Bridge Production_2 Migration (K3s)
+          ========================================
+          This playbook will:
+          1. Create database backup
+          2. Stop SMS receiver pod
+          3. Apply Production_2 schema migration
+          4. Update application code
+          5. Restart all pods
+          6. Verify deployment
+          ========================================
+
+    # ===================================
+    # Phase 1: Pre-Migration Backup
+    # ===================================
+    
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Get PostgreSQL pod name
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - app=postgres
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: postgres_pods
+
+    - name: Set PostgreSQL pod name
+      set_fact:
+        postgres_pod: "{{ postgres_pods.resources[0].metadata.name }}"
+      when: postgres_pods.resources | length > 0
+
+    - name: Create PostgreSQL backup
+      shell: |
+        kubectl exec {{ postgres_pod }} -n {{ namespace }} -- pg_dump -U {{ pg_user }} {{ pg_db }} > {{ backup_dir }}/sms_bridge_backup_{{ backup_timestamp }}.sql
+      when: postgres_pod is defined
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Create backup of current schema
+      copy:
+        src: ../schema.sql
+        dest: "{{ backup_dir }}/schema_old_{{ backup_timestamp }}.sql"
+      ignore_errors: yes
+
+    - name: Display backup status
+      debug:
+        msg: "Backups created in {{ backup_dir }} with timestamp {{ backup_timestamp }}"
+
+    # ===================================
+    # Phase 2: Stop SMS Receiver Pod
+    # ===================================
+
+    - name: Scale down SMS receiver deployment
+      kubernetes.core.k8s_scale:
+        api_version: apps/v1
+        kind: Deployment
+        name: sms-receiver
+        namespace: "{{ namespace }}"
+        replicas: 0
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        wait: true
+        wait_timeout: 60
+
+    - name: Wait for SMS receiver pod to terminate
+      pause:
+        seconds: 10
+
+    # ===================================
+    # Phase 3: Schema Migration
+    # ===================================
+
+    - name: Copy Production_2 schema to project directory
+      copy:
+        src: ../schema.sql
+        dest: "{{ project_dir }}/schema_production_2.sql"
+
+    - name: Create migration SQL script
+      copy:
+        dest: "{{ project_dir }}/migration_production_2.sql"
+        content: |
+          -- Production_2 Schema Migration Script
+          -- This script safely migrates from old schema to Production_2
+          
+          BEGIN;
+          
+          -- Step 1: Drop old tables completely (data will be recreated from Redis)
+          DROP TABLE IF EXISTS input_sms CASCADE;
+          DROP TABLE IF EXISTS out_sms CASCADE;
+          DROP TABLE IF EXISTS sms_monitor CASCADE;
+          DROP TABLE IF EXISTS count_sms CASCADE;
+          DROP TABLE IF EXISTS system_settings CASCADE;
+          
+          -- Step 2: Create input_sms with new Production_2 structure
+          CREATE TABLE input_sms (
+              id SERIAL PRIMARY KEY,
+              redis_id INTEGER NOT NULL,
+              mobile_number VARCHAR(15) NOT NULL,
+              country_code VARCHAR(5),
+              local_mobile VARCHAR(15),
+              sms_message TEXT NOT NULL,
+              received_timestamp TIMESTAMPTZ NOT NULL,
+              device_id VARCHAR(100),
+              mobile_check INTEGER DEFAULT 3,
+              duplicate_check INTEGER DEFAULT 3,
+              header_hash_check INTEGER DEFAULT 3,
+              count_check INTEGER DEFAULT 3,
+              foreign_number_check INTEGER DEFAULT 3,
+              blacklist_check INTEGER DEFAULT 3,
+              time_window_check INTEGER DEFAULT 3,
+              validation_status VARCHAR(20) DEFAULT 'pending',
+              failed_at_check VARCHAR(30),
+              created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          -- Create indexes
+          CREATE INDEX idx_input_redis_id ON input_sms (redis_id);
+          CREATE INDEX idx_input_mobile ON input_sms (mobile_number);
+          CREATE INDEX idx_input_validation_status ON input_sms (validation_status);
+          CREATE INDEX idx_input_received_timestamp ON input_sms (received_timestamp);
+          CREATE INDEX idx_input_country_local ON input_sms (country_code, local_mobile);
+          
+          -- Step 3: Recreate onboarding_mobile table with Production_2 structure
+          DROP TABLE IF EXISTS onboarding_mobile CASCADE;
+          CREATE TABLE onboarding_mobile (
+              id SERIAL PRIMARY KEY,
+              mobile_number VARCHAR(15) NOT NULL,
+              email VARCHAR(100),
+              device_id VARCHAR(100),
+              hash VARCHAR(64) NOT NULL,
+              request_timestamp TIMESTAMPTZ NOT NULL,
+              user_deadline TIMESTAMPTZ,
+              expires_at TIMESTAMPTZ,
+              is_validated BOOLEAN DEFAULT FALSE,
+              validated_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          -- Create indexes for onboarding_mobile
+          CREATE INDEX idx_onboard_mobile ON onboarding_mobile (mobile_number);
+          CREATE INDEX idx_onboard_hash ON onboarding_mobile (hash);
+          CREATE INDEX idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
+          CREATE INDEX idx_onboard_device ON onboarding_mobile (device_id);
+          
+          -- Step 4: Recreate blacklist_sms table with Production_2 structure
+          DROP TABLE IF EXISTS blacklist_sms CASCADE;
+          CREATE TABLE blacklist_sms (
+              id SERIAL PRIMARY KEY,
+              mobile_number VARCHAR(15) NOT NULL UNIQUE,
+              country_code VARCHAR(5),
+              local_mobile VARCHAR(15),
+              reason TEXT,
+              blacklisted_at TIMESTAMPTZ DEFAULT NOW(),
+              created_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          -- Create indexes for blacklist_sms
+          CREATE INDEX idx_blacklist_country_local ON blacklist_sms (country_code, local_mobile);
+          CREATE INDEX idx_blacklist_blacklisted_at ON blacklist_sms (blacklisted_at);
+          
+          -- Step 5: Create power_down_store table
+          CREATE TABLE IF NOT EXISTS power_down_store (
+              id SERIAL PRIMARY KEY,
+              mobile_number VARCHAR(15) NOT NULL,
+              sms_message TEXT NOT NULL,
+              received_timestamp TIMESTAMPTZ NOT NULL,
+              device_id VARCHAR(100),
+              stored_at TIMESTAMPTZ DEFAULT NOW(),
+              processed BOOLEAN DEFAULT FALSE,
+              processed_at TIMESTAMPTZ
+          );
+          
+          CREATE INDEX idx_powerdown_processed ON power_down_store (processed);
+          CREATE INDEX idx_powerdown_stored_at ON power_down_store (stored_at);
+          
+          -- Step 6: Create power_down_store_counters table
+          CREATE TABLE IF NOT EXISTS power_down_store_counters (
+              counter_name VARCHAR(50) PRIMARY KEY,
+              counter_value BIGINT NOT NULL DEFAULT 0,
+              updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          INSERT INTO power_down_store_counters (counter_name, counter_value) 
+          VALUES 
+              ('queue_input_sms', 0),
+              ('queue_onboarding', 0)
+          ON CONFLICT (counter_name) DO NOTHING;
+          
+          -- Step 7: Create sms_settings table
+          CREATE TABLE IF NOT EXISTS sms_settings (
+              setting_key VARCHAR(100) PRIMARY KEY,
+              setting_value TEXT NOT NULL,
+              setting_type VARCHAR(20) DEFAULT 'string',
+              category VARCHAR(50) DEFAULT 'general',
+              description TEXT,
+              updated_at TIMESTAMPTZ DEFAULT NOW()
+          );
+          
+          -- Insert default settings for Production_2
+          INSERT INTO sms_settings (setting_key, setting_value, setting_type, category, description) 
+          VALUES 
+              ('onboarding_ttl_seconds', '86400', 'integer', 'general', 'Redis TTL for onboarding entries (24 hours)'),
+              ('user_timelimit_seconds', '300', 'integer', 'general', 'User deadline for SMS submission (5 minutes)'),
+              ('hash_salt_length', '16', 'integer', 'general', 'Salt length for hash generation'),
+              ('hetzner_sync_interval_seconds', '10', 'integer', 'sync', 'Hetzner Supabase sync frequency (validated only)'),
+              ('local_sync_interval_seconds', '120', 'integer', 'sync', 'Local PostgreSQL dump frequency (all data)'),
+              ('blacklist_check_interval_seconds', '300', 'integer', 'sync', 'Blacklist reload from PostgreSQL frequency'),
+              ('mobile_check_enabled', 'true', 'boolean', 'validation', 'Enable mobile format validation'),
+              ('duplicate_check_enabled', 'true', 'boolean', 'validation', 'Enable duplicate detection'),
+              ('header_hash_check_enabled', 'true', 'boolean', 'validation', 'Enable header and hash validation'),
+              ('count_check_enabled', 'true', 'boolean', 'validation', 'Enable SMS count threshold check'),
+              ('foreign_number_check_enabled', 'true', 'boolean', 'validation', 'Enable foreign country code check'),
+              ('blacklist_check_enabled', 'true', 'boolean', 'validation', 'Enable blacklist check'),
+              ('time_window_check_enabled', 'true', 'boolean', 'validation', 'Enable time window validation'),
+              ('count_check_threshold', '5', 'integer', 'thresholds', 'Max SMS per mobile in 24h before rejection'),
+              ('blacklist_threshold', '10', 'integer', 'thresholds', 'Count to trigger permanent blacklist'),
+              ('allowed_country_codes', '["91", "1", "44", "61", "33", "49"]', 'json', 'validation', 'Allowed country codes for foreign number check'),
+              ('redis_host', 'redis', 'string', 'infrastructure', 'Redis server host'),
+              ('redis_port', '6379', 'integer', 'infrastructure', 'Redis server port'),
+              ('pgbouncer_pool_size', '10', 'integer', 'infrastructure', 'PgBouncer connection pool size'),
+              ('log_level', 'INFO', 'string', 'monitoring', 'Application log level (DEBUG, INFO, WARNING, ERROR)'),
+              ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)')
+          ON CONFLICT (setting_key) DO NOTHING;
+          
+          -- Step 8: Verify migration - Check table count
+          DO $$
+          DECLARE
+            table_count INTEGER;
+          BEGIN
+            SELECT COUNT(*) INTO table_count 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE';
+            
+            IF table_count = 6 THEN
+              RAISE NOTICE 'Migration successful: 6 tables created';
+            ELSE
+              RAISE EXCEPTION 'Migration failed: Expected 6 tables, found %', table_count;
+            END IF;
+          END $$;
+          
+          COMMIT;
+
+    - name: Display migration script created
+      debug:
+        msg: "Migration script created at {{ project_dir }}/migration_production_2.sql"
+
+    - name: Copy migration script to PostgreSQL pod
+      shell: |
+        kubectl cp {{ project_dir }}/migration_production_2.sql {{ namespace }}/{{ postgres_pod }}:/tmp/migration_production_2.sql
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Apply Production_2 schema migration
+      shell: |
+        kubectl exec {{ postgres_pod }} -n {{ namespace }} -- psql -U {{ pg_user }} -d {{ pg_db }} -f /tmp/migration_production_2.sql
+      register: migration_result
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Display migration result
+      debug:
+        var: migration_result.stdout_lines
+
+    - name: Verify new tables exist
+      shell: |
+        kubectl exec {{ postgres_pod }} -n {{ namespace }} -- psql -U {{ pg_user }} -d {{ pg_db }} -c "\dt"
+      register: tables_list
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Display database tables
+      debug:
+        var: tables_list.stdout_lines
+
+    - name: Verify sms_settings table content
+      shell: |
+        kubectl exec {{ postgres_pod }} -n {{ namespace }} -- psql -U {{ pg_user }} -d {{ pg_db }} -c "SELECT COUNT(*) FROM sms_settings;"
+      register: settings_count
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Display settings count
+      debug:
+        msg: "sms_settings table has {{ settings_count.stdout_lines | last }} settings"
+
+    # ===================================
+    # Phase 4: Update Application Code
+    # ===================================
+
+    - name: Copy updated core application package
+      copy:
+        src: ../core/
+        dest: "{{ project_dir }}/core/"
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
+    - name: Update Dockerfile for SMS receiver
+      copy:
+        dest: "{{ project_dir }}/Dockerfile"
+        content: |
+          FROM python:3.11-slim
+          WORKDIR /app
+          COPY core/requirements.txt /app/core/requirements.txt
+          RUN pip install --no-cache-dir -r core/requirements.txt
+          COPY core/ /app/core/
+          EXPOSE 8080
+          CMD ["uvicorn", "core.sms_server:app", "--host", "0.0.0.0", "--port", "8080"]
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
+    # ===================================
+    # Phase 5: Rebuild Container Image
+    # ===================================
+
+    - name: Check if docker is available
+      command: which docker
+      register: docker_available
+      failed_when: false
+
+    - name: Check if buildah is available
+      command: which buildah
+      register: buildah_available
+      failed_when: false
+
+    - name: Fail if no container build tool available
+      fail:
+        msg: "Neither Docker nor Buildah is available. Please install one of them."
+      when: docker_available.rc != 0 and buildah_available.rc != 0
+
+    - name: Build SMS receiver image with Docker
+      shell: |
+        cd {{ project_dir }}
+        docker build -t sms_receiver_image:latest .
+      when: docker_available.rc == 0
+
+    - name: Build SMS receiver image with Buildah
+      shell: |
+        cd {{ project_dir }}
+        buildah build -t sms_receiver_image:latest .
+      when: docker_available.rc != 0 and buildah_available.rc == 0
+
+    - name: Save Docker image to tar file
+      shell: |
+        docker save sms_receiver_image:latest -o /tmp/sms_receiver_image.tar
+      when: docker_available.rc == 0
+
+    - name: Save Buildah image to tar file
+      shell: |
+        buildah push sms_receiver_image:latest oci-archive:/tmp/sms_receiver_image.tar
+      when: docker_available.rc != 0 and buildah_available.rc == 0
+
+    - name: Import image into K3s containerd
+      shell: |
+        sudo k3s ctr images import /tmp/sms_receiver_image.tar
+      become: yes
+      become_method: sudo
+
+    - name: Cleanup temporary image tar file
+      file:
+        path: /tmp/sms_receiver_image.tar
+        state: absent
+      ignore_errors: yes
+
+    # ===================================
+    # Phase 6: Restart SMS Receiver Pod
+    # ===================================
+
+    - name: Force rollout restart of SMS receiver
+      shell: |
+        kubectl rollout restart deployment/sms-receiver -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Wait for SMS receiver deployment to be ready
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: sms-receiver
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 300
+
+    # ===================================
+    # Phase 7: Verify Deployment
+    # ===================================
+
+    - name: Wait for pods to stabilize
+      pause:
+        seconds: 10
+
+    - name: Get pod status
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: pod_status
+
+    - name: Display pod status
+      debug:
+        msg: "Pod {{ item.metadata.name }} is {{ item.status.phase }}"
+      loop: "{{ pod_status.resources }}"
+
+    - name: Get SMS receiver pod name
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - app=sms-receiver
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: sms_receiver_pods
+
+    - name: Set SMS receiver pod name
+      set_fact:
+        sms_receiver_pod: "{{ sms_receiver_pods.resources[0].metadata.name }}"
+      when: sms_receiver_pods.resources | length > 0
+
+    - name: Check SMS receiver logs
+      shell: |
+        kubectl logs {{ sms_receiver_pod }} -n {{ namespace }} --tail=50
+      register: receiver_logs
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      when: sms_receiver_pod is defined
+
+    - name: Display SMS receiver logs
+      debug:
+        var: receiver_logs.stdout_lines
+      when: sms_receiver_pod is defined
+
+    - name: Get service information
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: sms-receiver
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: sms_receiver_service
+
+    - name: Display service endpoint
+      debug:
+        msg: "SMS Receiver accessible at: http://localhost:{{ sms_receiver_service.resources[0].spec.ports[0].nodePort }}"
+
+    # ===================================
+    # Final Summary
+    # ===================================
+
+    - name: Display migration summary
+      debug:
+        msg: |
+          ========================================
+          Production_2 Migration Complete! (K3s)
+          ========================================
+          
+          ✅ Database backup: {{ backup_dir }}/sms_bridge_backup_{{ backup_timestamp }}.sql
+          ✅ Schema migrated to Production_2 (6 tables)
+          ✅ SMS receiver pod restarted with new code
+          
+          Services:
+          - SMS Bridge API: http://localhost:30080
+          - Admin UI: http://localhost:30080/admin/settings/ui
+          - Health Check: http://localhost:30080/health
+          - Grafana: http://localhost:30001
+          - Prometheus: http://localhost:30090
+          
+          New Features:
+          - Redis-first architecture (6 PostgreSQL tables)
+          - Dual time windows (user_deadline + expires_at)
+          - Admin UI for settings management
+          - Dynamic configuration (no restarts needed)
+          - Count check validation (Redis counters)
+          - Production_2 POST /onboard/register endpoint
+          
+          Next Steps:
+          1. Verify health check: curl http://localhost:30080/health
+          2. Access admin UI: http://localhost:30080/admin/settings/ui
+          3. Test POST endpoint with new fields (mobile, email, device_id)
+          4. Monitor logs: kubectl logs -f deployment/sms-receiver -n {{ namespace }}
+          
+          Useful K3s Commands:
+          - View pods: kubectl get pods -n {{ namespace }}
+          - View services: kubectl get services -n {{ namespace }}
+          - Check logs: kubectl logs deployment/sms-receiver -n {{ namespace }}
+          - Restart pod: kubectl rollout restart deployment/sms-receiver -n {{ namespace }}
+          
+          Rollback (if needed):
+          - Restore database: kubectl exec {{ postgres_pod }} -n {{ namespace }} -- psql -U postgres sms_bridge < {{ backup_dir }}/sms_bridge_backup_{{ backup_timestamp }}.sql
+          ========================================
+
+    - name: Create migration report file
+      copy:
+        dest: "{{ project_dir }}/migration_report_{{ backup_timestamp }}.txt"
+        content: |
+          SMS Bridge Production_2 Migration Report (K3s)
+          ==========================================
+          
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          
+          Backup Location: {{ backup_dir }}
+          - Database backup: sms_bridge_backup_{{ backup_timestamp }}.sql
+          - Schema backup: schema_old_{{ backup_timestamp }}.sql
+          
+          Migration Status: SUCCESS
+          
+          Pods Status:
+          {% for pod in pod_status.resources %}
+          - {{ pod.metadata.name }}: {{ pod.status.phase }}
+          {% endfor %}
+          
+          Production_2 Features Deployed:
+          - Redis-first architecture
+          - 6 PostgreSQL tables (input_sms, onboarding_mobile, blacklist_sms, power_down_store, power_down_store_counters, sms_settings)
+          - Dual time windows (X=5min, TTL=24h)
+          - Admin UI for settings management
+          - POST /onboard/register endpoint
+          - Count check validation
+          - Dynamic configuration system
+          
+          ==========================================
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
+    - name: Display migration report location
+      debug:
+        msg: "Migration report saved to: {{ project_dir }}/migration_report_{{ backup_timestamp }}.txt"
