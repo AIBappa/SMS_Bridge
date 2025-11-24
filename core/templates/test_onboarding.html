@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMS Bridge - Mobile Onboarding</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #555;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+        }
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+        .alert {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .result-box {
+            background-color: #e7f3ff;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+            border-left: 4px solid #007bff;
+        }
+        .hash-display {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            word-break: break-all;
+            border: 1px solid #dee2e6;
+        }
+        .status-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        .status-table th, .status-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .status-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-inactive {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-validated {
+            background-color: #cce7ff;
+            color: #004085;
+        }
+        .copy-btn {
+            background-color: #28a745;
+            color: white;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 5px 5px 0 0;
+            display: inline-block;
+        }
+        .copy-btn:hover {
+            background-color: #218838;
+        }
+        .sms-btn {
+            background-color: #17a2b8;
+            color: white;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 5px 5px 0 0;
+            display: inline-block;
+            text-decoration: none;
+        }
+        .sms-btn:hover {
+            background-color: #138496;
+            text-decoration: none;
+            color: white;
+        }
+        .button-group {
+            margin-top: 10px;
+        }
+        .navigation {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .navigation a {
+            color: #007bff;
+            text-decoration: none;
+            padding: 10px 20px;
+            margin: 0 10px;
+            border: 2px solid #007bff;
+            border-radius: 5px;
+            display: inline-block;
+        }
+        .navigation a:hover {
+            background-color: #007bff;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="navigation">
+        <a href="{{ url_for('index') }}">SMS Testing</a>
+        <a href="{{ url_for('onboarding') }}">Mobile Onboarding</a>
+    </div>
+
+    <div class="container">
+        <h1>Mobile Number Onboarding</h1>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'error' if category == 'error' else category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- Mobile Registration Form -->
+        <div class="container">
+            <h2>Register Mobile Number</h2>
+            <form method="POST" action="{{ url_for('register_mobile') }}">
+                <div class="form-group">
+                    <label for="mobile_number">Mobile Number (10-15 digits):</label>
+                    <input type="text" 
+                           id="mobile_number" 
+                           name="mobile_number" 
+                           placeholder="e.g., 9876543210" 
+                           pattern="[0-9]{10,15}"
+                           required>
+                </div>
+                <button type="submit">Register Mobile</button>
+            </form>
+            
+            {% if mobile_number and hash_value %}
+            <div class="result-box">
+                <h3>Registration Successful!</h3>
+                <table class="status-table">
+                    <tr>
+                        <th>Mobile Number:</th>
+                        <td>{{ mobile_number }}</td>
+                    </tr>
+                    <tr>
+                        <th>Generated Hash:</th>
+                        <td>
+                            <div class="hash-display">{{ hash_value }}</div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>SMS to Send:</th>
+                        <td>
+                            <div class="hash-display" id="sms-message">{{ sms_message }}</div>
+                            <div class="button-group">
+                                <button class="copy-btn" onclick="copyToClipboard('{{ sms_message|e }}')">📋 Copy SMS</button>
+                                <a href="sms:?body={{ sms_message|urlencode }}" class="sms-btn">📱 Send SMS</a>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+                <p><strong>Instructions:</strong></p>
+                <ol>
+                    <li><strong>Option 1 - Mobile Device:</strong> Click "📱 Send SMS" to open your SMS app with the message pre-filled</li>
+                    <li><strong>Option 2 - Manual:</strong> Click "📋 Copy SMS" and paste it in the SMS Testing page</li>
+                    <li>Send the SMS with your mobile number as the sender</li>
+                    <li>Check the validation results in the SMS Testing page or database</li>
+                </ol>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Status Check Form -->
+        <div class="container">
+            <h2>Check Onboarding Status</h2>
+            <form method="POST" action="{{ url_for('check_onboarding_status') }}">
+                <div class="form-group">
+                    <label for="status_mobile_number">Mobile Number:</label>
+                    <input type="text" 
+                           id="status_mobile_number" 
+                           name="mobile_number" 
+                           placeholder="e.g., 9876543210" 
+                           pattern="[0-9]{10,15}"
+                           required>
+                </div>
+                <button type="submit" class="btn-secondary">Check Status</button>
+            </form>
+            
+            {% if status_mobile and status_data %}
+            <div class="result-box">
+                <h3>Onboarding Status for {{ status_mobile }}</h3>
+                <table class="status-table">
+                    <tr>
+                        <th>Mobile Number:</th>
+                        <td>{{ status_data.mobile_number }}</td>
+                    </tr>
+                    <tr>
+                        <th>Registration Time:</th>
+                        <td>{{ status_data.request_timestamp }}</td>
+                    </tr>
+                    <tr>
+                        <th>Status:</th>
+                        <td>
+                            <span class="status-badge {% if status_data.is_active %}status-active{% else %}status-inactive{% endif %}">
+                                {% if status_data.is_active %}Active{% else %}Inactive{% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>SMS Validated:</th>
+                        <td>
+                            <span class="status-badge {% if status_data.sms_validated %}status-validated{% else %}status-inactive{% endif %}">
+                                {% if status_data.sms_validated %}Yes{% else %}No{% endif %}
+                            </span>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Instructions -->
+        <div class="container">
+            <h2>How It Works</h2>
+            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px;">
+                <h4>Onboarding Process:</h4>
+                <ol>
+                    <li><strong>Register:</strong> Enter your mobile number to generate a unique hash</li>
+                    <li><strong>Get SMS Format:</strong> System provides the exact SMS message to send</li>
+                    <li><strong>Send SMS:</strong> Use the SMS Testing page to send the formatted message</li>
+                    <li><strong>Validation:</strong> System validates the SMS against your onboarding record</li>
+                    <li><strong>Check Status:</strong> Monitor your onboarding and validation status</li>
+                </ol>
+                
+                <h4>SMS Format:</h4>
+                <p>The generated SMS follows this format:</p>
+                <code>HEADER MOBILE_NUMBER HASH</code>
+                <p>Example: <code>ONBOARD 9876543210 a1b2c3d4e5f6...</code></p>
+                
+                <h4>Validation Checks:</h4>
+                <ul>
+                    <li><strong>Foreign Number:</strong> Validates country code</li>
+                    <li><strong>Mobile Check:</strong> Verifies mobile exists in onboarding system</li>
+                    <li><strong>Header Hash:</strong> Validates message format and hash integrity</li>
+                    <li><strong>Time Window:</strong> Ensures SMS sent within allowed timeframe</li>
+                    <li><strong>Other checks:</strong> Blacklist, duplicate detection, etc.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function copyToClipboard(text) {
+            // Modern browsers with clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showCopySuccess();
+                }, function(err) {
+                    console.error('Clipboard API failed: ', err);
+                    fallbackCopyTextToClipboard(text);
+                });
+            } else {
+                // Fallback for older browsers or non-HTTPS
+                fallbackCopyTextToClipboard(text);
+            }
+        }
+
+        function fallbackCopyTextToClipboard(text) {
+            var textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // Avoid scrolling to bottom
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                var successful = document.execCommand('copy');
+                if (successful) {
+                    showCopySuccess();
+                } else {
+                    showCopyError();
+                }
+            } catch (err) {
+                console.error('Fallback copy failed: ', err);
+                showCopyError();
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        function showCopySuccess() {
+            // Change button text temporarily
+            var btn = event.target;
+            var originalText = btn.innerHTML;
+            btn.innerHTML = '✅ Copied!';
+            btn.style.backgroundColor = '#28a745';
+            
+            setTimeout(function() {
+                btn.innerHTML = originalText;
+                btn.style.backgroundColor = '#28a745';
+            }, 2000);
+        }
+
+        function showCopyError() {
+            alert('Copy failed. Please select and copy the text manually.');
+        }
+
+        // Add click handler to SMS message div for easy selection
+        document.addEventListener('DOMContentLoaded', function() {
+            var smsMessageDiv = document.getElementById('sms-message');
+            if (smsMessageDiv) {
+                smsMessageDiv.addEventListener('click', function() {
+                    selectText(this);
+                });
+                smsMessageDiv.style.cursor = 'pointer';
+                smsMessageDiv.title = 'Click to select text';
+            }
+        });
+
+        function selectText(element) {
+            var range, selection;
+            if (window.getSelection && document.createRange) {
+                selection = window.getSelection();
+                range = document.createRange();
+                range.selectNodeContents(element);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            } else if (document.selection && document.body.createTextRange) {
+                range = document.body.createTextRange();
+                range.moveToElementText(element);
+                range.select();
+            }
+        }
+    </script>
+</body>
+</html>

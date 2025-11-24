@@ -1138,3 +1138,189 @@ async def update_setting_value(setting_key: str, request: SettingUpdateRequest):
     except Exception as e:
         logger.error(f"Error updating setting '{setting_key}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update setting")
+
+
+# ========================================
+# Test UI Endpoints (Production_2)
+# ========================================
+
+@app.get("/test/ui", response_class=HTMLResponse)
+async def test_ui(request: Request):
+    """
+    Test UI for SMS testing with single SMS and batch upload.
+    Combined tab interface for SMS Testing and Mobile Onboarding.
+    """
+    return templates.TemplateResponse("test_ui.html", {"request": request})
+
+
+class TestSMSRequest(BaseModel):
+    """Request model for test SMS"""
+    sender_number: str
+    sms_message: str
+    received_timestamp: str
+
+
+@app.post("/test/send_single")
+async def test_send_single(data: TestSMSRequest):
+    """
+    Send a single test SMS through the system.
+    Used by Test UI for single message testing.
+    """
+    try:
+        # Parse timestamp
+        received_dt = datetime.fromisoformat(data.received_timestamp.replace('Z', '+00:00'))
+        
+        # Create SMSInput and submit through main endpoint
+        sms_input = SMSInput(
+            sender_number=data.sender_number,
+            sms_message=data.sms_message,
+            received_timestamp=received_dt
+        )
+        
+        # Call the main sms_receive endpoint
+        background_tasks = BackgroundTasks()
+        result = await sms_receive(sms_input, background_tasks)
+        
+        return {"success": True, "response": result}
+        
+    except Exception as e:
+        logger.error(f"Error in test_send_single: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+from fastapi import File, UploadFile
+import pandas as pd
+from io import BytesIO
+
+
+@app.post("/test/upload_file")
+async def test_upload_file(file: UploadFile = File(...)):
+    """
+    Upload and process Excel/CSV file with SMS data.
+    Used by Test UI for batch testing.
+    """
+    try:
+        # Validate file extension
+        filename = file.filename.lower()
+        if not filename.endswith(('.xlsx', '.xls', '.csv')):
+            return {"success": False, "error": "Invalid file type. Please upload Excel or CSV files only."}
+        
+        # Read file content
+        content = await file.read()
+        
+        # Parse based on file type
+        if filename.endswith('.csv'):
+            df = pd.read_csv(BytesIO(content))
+        else:
+            df = pd.read_excel(BytesIO(content))
+        
+        # Validate required columns
+        required_columns = ['sender_number', 'sms_message', 'received_timestamp']
+        if not all(col in df.columns for col in required_columns):
+            return {"success": False, "error": f"File must contain columns: {', '.join(required_columns)}"}
+        
+        # Process each row
+        results = []
+        success_count = 0
+        error_count = 0
+        
+        for index, row in df.iterrows():
+            try:
+                # Parse timestamp
+                received_dt = datetime.fromisoformat(str(row['received_timestamp']).replace('Z', '+00:00'))
+                
+                # Create SMSInput
+                sms_input = SMSInput(
+                    sender_number=str(row['sender_number']),
+                    sms_message=str(row['sms_message']),
+                    received_timestamp=received_dt
+                )
+                
+                # Submit SMS
+                background_tasks = BackgroundTasks()
+                result = await sms_receive(sms_input, background_tasks)
+                
+                results.append({
+                    'row': index + 1,
+                    'sender_number': row['sender_number'],
+                    'success': True,
+                    'response': result
+                })
+                success_count += 1
+                
+            except Exception as e:
+                results.append({
+                    'row': index + 1,
+                    'sender_number': row['sender_number'],
+                    'success': False,
+                    'response': str(e)
+                })
+                error_count += 1
+        
+        return {
+            "success": True,
+            "filename": file.filename,
+            "total_rows": len(df),
+            "success_count": success_count,
+            "error_count": error_count,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in test_upload_file: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/test/register_mobile")
+async def test_register_mobile(data: OnboardingRequest):
+    """
+    Register mobile for onboarding via Test UI.
+    Returns hash and message format for validation.
+    """
+    try:
+        # Call the main onboarding endpoint
+        result = await register_mobile_production_2(data)
+        return {"success": True, "data": result}
+        
+    except Exception as e:
+        logger.error(f"Error in test_register_mobile: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/test/check_status")
+async def test_check_status(data: dict):
+    """
+    Check onboarding status via Test UI.
+    """
+    try:
+        mobile_number = data.get('mobile_number')
+        if not mobile_number:
+            return {"success": False, "error": "Mobile number is required"}
+        
+        # Query onboarding status
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT mobile_number, request_timestamp, is_active, sms_validated
+                FROM onboarding_mobile
+                WHERE mobile_number = $1
+                """,
+                mobile_number
+            )
+        
+        if not row:
+            return {"success": False, "error": f"Mobile {mobile_number} not found in onboarding"}
+        
+        status_data = {
+            'mobile_number': row['mobile_number'],
+            'request_timestamp': row['request_timestamp'].isoformat() if row['request_timestamp'] else None,
+            'is_active': row['is_active'],
+            'sms_validated': row['sms_validated']
+        }
+        
+        return {"success": True, "data": status_data}
+        
+    except Exception as e:
+        logger.error(f"Error in test_check_status: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
