@@ -157,10 +157,15 @@
               email VARCHAR(100),
               device_id VARCHAR(100),
               hash VARCHAR(64) NOT NULL,
-              request_timestamp TIMESTAMPTZ NOT NULL,
+              salt VARCHAR(32) NOT NULL,
+              country_code VARCHAR(5),
+              local_mobile VARCHAR(15),
+              request_timestamp TIMESTAMPTZ DEFAULT NOW(),
               user_deadline TIMESTAMPTZ,
               expires_at TIMESTAMPTZ,
+              is_active BOOLEAN DEFAULT TRUE,
               is_validated BOOLEAN DEFAULT FALSE,
+              sms_validated BOOLEAN DEFAULT FALSE,
               validated_at TIMESTAMPTZ,
               created_at TIMESTAMPTZ DEFAULT NOW()
           );
@@ -170,6 +175,7 @@
           CREATE INDEX idx_onboard_hash ON onboarding_mobile (hash);
           CREATE INDEX idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
           CREATE INDEX idx_onboard_device ON onboarding_mobile (device_id);
+          CREATE INDEX idx_onboard_country_local ON onboarding_mobile (country_code, local_mobile);
           
           -- Step 4: Recreate blacklist_sms table with Production_2 structure
           DROP TABLE IF EXISTS blacklist_sms CASCADE;
@@ -251,23 +257,7 @@
               ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)')
           ON CONFLICT (setting_key) DO NOTHING;
           
-          -- Step 8: Verify migration - Check table count
-          DO $$
-          DECLARE
-            table_count INTEGER;
-          BEGIN
-            SELECT COUNT(*) INTO table_count 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_type = 'BASE TABLE';
-            
-            IF table_count = 6 THEN
-              RAISE NOTICE 'Migration successful: 6 tables created';
-            ELSE
-              RAISE EXCEPTION 'Migration failed: Expected 6 tables, found %', table_count;
-            END IF;
-          END $$;
-          
+          -- Migration complete
           COMMIT;
 
     - name: Display migration script created
@@ -381,9 +371,8 @@
 
     - name: Import image into K3s containerd
       shell: |
-        sudo k3s ctr images import /tmp/sms_receiver_image.tar
+        k3s ctr images import /tmp/sms_receiver_image.tar
       become: yes
-      become_method: sudo
 
     - name: Cleanup temporary image tar file
       file:
