@@ -2,12 +2,37 @@
 
 This folder contains Ansible playbooks for deploying the SMS Bridge infrastructure using Docker containers.
 
+## 🚀 Production_2 Quick Start
+
+**NEW**: One-command deployment with automated migration!
+
+```bash
+cd ansible-docker
+./deploy_production_2.sh
+```
+
+This interactive script offers:
+1. **Automated Migration** (RECOMMENDED) - Migrates existing system to Production_2 with data preservation
+2. **Fresh Install** - Clean Production_2 installation (destroys existing data)
+3. **Manual Backup** - Backup current system without deployment
+
+📖 **For detailed deployment guide**: See [DEPLOYMENT_PRODUCTION_2.md](DEPLOYMENT_PRODUCTION_2.md)
+
+---
+
 ## Files
 
+### Deployment Playbooks
+- `migrate_to_production_2.yml` - **NEW** - Production_2 migration with schema update and data preservation
 - `setup_sms_bridge.yml` - Main deployment playbook using community.docker
 - `restart_sms_bridge.yml` - Restart all Docker containers
 - `stop_sms_bridge.yml` - Stop and remove all Docker containers
+
+### Deployment Scripts & Guides
+- `deploy_production_2.sh` - **NEW** - Interactive deployment script (one-command deployment)
+- `DEPLOYMENT_PRODUCTION_2.md` - **NEW** - Comprehensive Production_2 deployment guide
 - `inventory.txt` - Ansible inventory file
+- `README.md` - This file
 
 ## Shared Files (from parent directory)
 
@@ -32,13 +57,34 @@ The playbooks reference these shared files from the parent directory:
 
 ## Quick Start
 
-### Deploy SMS Bridge with Docker
+### Production_2 Deployment (Recommended)
+
+#### Option 1: Interactive Script (Easiest)
+```bash
+cd ansible-docker
+./deploy_production_2.sh
+```
+
+#### Option 2: Direct Ansible (Advanced)
+```bash
+# Automated migration (preserves data)
+ansible-playbook -i inventory.txt migrate_to_production_2.yml --ask-vault-pass
+
+# OR Fresh install (destroys data)
+ansible-playbook -i inventory.txt stop_sms_bridge.yml --ask-vault-pass
+docker volume rm pg_data
+ansible-playbook -i inventory.txt setup_sms_bridge.yml --ask-vault-pass
+```
+
+### Legacy Deployment
+
+#### Deploy SMS Bridge with Docker
 ```bash
 cd ansible-docker
 ansible-playbook -i inventory.txt setup_sms_bridge.yml --ask-vault-pass
 ```
 
-### Manage the Deployment
+#### Manage the Deployment
 ```bash
 # Restart all containers
 ansible-playbook -i inventory.txt restart_sms_bridge.yml
@@ -51,9 +97,22 @@ ansible-playbook -i inventory.txt stop_sms_bridge.yml
 
 After deployment, services will be available at:
 
-- **SMS Receiver**: http://localhost:8080
+### Application Services
+- **SMS Bridge API**: http://localhost:8080
+  - Health check: http://localhost:8080/health
+  - **NEW** Admin UI: http://localhost:8080/admin/settings/ui (Production_2)
+  - Metrics: http://localhost:8080/metrics
+
+### Monitoring Services
 - **Grafana**: http://localhost:3001 (admin/your_grafana_password)
 - **Prometheus**: http://localhost:9090
+- **Postgres Exporter**: http://localhost:9187/metrics
+- **Redis Exporter**: http://localhost:9121/metrics
+
+### Database Services
+- **PostgreSQL**: localhost:5432
+- **Redis**: localhost:6379
+- **PgBouncer**: localhost:6432
 
 ## Docker Management
 
