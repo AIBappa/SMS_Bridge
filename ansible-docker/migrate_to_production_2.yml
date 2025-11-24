@@ -288,6 +288,12 @@
     # Phase 4: Start PostgreSQL and Apply Migration
     # ===================================
 
+    - name: Create Docker network if it doesn't exist
+      community.docker.docker_network:
+        name: sms_bridge_network
+        state: present
+      ignore_errors: yes
+
     - name: Start PostgreSQL container for migration
       community.docker.docker_container:
         name: postgres
