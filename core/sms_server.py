@@ -442,15 +442,20 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to start background workers: {e}")
     
-    # Cache warmup: Load existing validated numbers into Redis
-    pool = await get_db_pool()
-    async with pool.acquire() as conn:
-        numbers = await conn.fetch("SELECT local_mobile FROM out_sms WHERE local_mobile IS NOT NULL")
-        for row in numbers:
-            # Use both sync (for backward compat) and async Redis
-            redis_client.sadd('out_sms_numbers', row['local_mobile'])
-            await redis_pool.sadd('out_sms_numbers', row['local_mobile'])
-    logger.info(f"Redis cache warmed up with {len(numbers)} validated numbers")
+    # Cache warmup: Load existing validated numbers into Redis (Production_2)
+    # In Production_2, validated numbers come from onboarding_mobile with sms_validated=true
+    try:
+        pool = await get_db_pool()
+        async with pool.acquire() as conn:
+            numbers = await conn.fetch(
+                "SELECT local_mobile FROM onboarding_mobile WHERE sms_validated = TRUE AND local_mobile IS NOT NULL"
+            )
+            for row in numbers:
+                # Use async Redis pool (Redis-first architecture)
+                await redis_pool.sadd('validated_numbers', row['local_mobile'])
+        logger.info(f"Redis cache warmed up with {len(numbers)} validated numbers from onboarding_mobile")
+    except Exception as e:
+        logger.warning(f"Cache warmup skipped (Production_2 tables may not exist yet): {e}")
 
     
     # Start batch processor
