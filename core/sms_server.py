@@ -172,7 +172,7 @@ async def get_db_pool():
 async def get_setting(key: str):
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        result = await conn.fetchval("SELECT setting_value FROM system_settings WHERE setting_key = $1", key)
+        result = await conn.fetchval("SELECT setting_value FROM sms_settings WHERE setting_key = $1", key)
         if result is None:
             return None
         # Try to parse as JSON, if it fails return as string
@@ -329,7 +329,7 @@ async def batch_processor():
                     # Insert default batch_timeout setting
                     async with pool.acquire() as conn:
                         await conn.execute("""
-                            INSERT INTO system_settings (setting_key, setting_value) 
+                            INSERT INTO sms_settings (setting_key, setting_value) 
                             VALUES ('batch_timeout', '2.0') 
                             ON CONFLICT (setting_key) DO UPDATE SET setting_value = '2.0'
                         """)
@@ -415,7 +415,7 @@ async def batch_processor():
                 new_last_uuid = rows[-1]['uuid']
                 async with pool.acquire() as conn:
                     await conn.execute("""
-                        UPDATE system_settings SET setting_value = $1 WHERE setting_key = 'last_processed_uuid'
+                        UPDATE sms_settings SET setting_value = $1 WHERE setting_key = 'last_processed_uuid'
                     """, str(new_last_uuid))
                 
                 logger.info(f"Batch processing completed. Updated last_processed_uuid to: {new_last_uuid}")
@@ -547,7 +547,7 @@ async def register_mobile(request: OnboardingRequest):
         # Generate salt (use a sensible default if the setting is missing)
         async with pool.acquire() as conn:
             salt_val = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'hash_salt_length'"
             )
         # If the DB value is missing or empty, default to 16 (bytes -> 32 hex chars)
         try:
@@ -585,7 +585,7 @@ async def register_mobile(request: OnboardingRequest):
         # Get permitted header from settings (use first one for generation)
         async with pool.acquire() as conn:
             permitted_headers_str = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'permitted_headers'"
             )
         
         if not permitted_headers_str:
@@ -661,7 +661,7 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         # Get salt length from settings
         async with pool.acquire() as conn:
             salt_length = int(await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'hash_salt_length'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'hash_salt_length'"
             ) or 16)
         
         salt = secrets.token_hex(salt_length // 2)
@@ -669,7 +669,7 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         # Get permitted header from settings
         async with pool.acquire() as conn:
             permitted_headers_str = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'permitted_headers'"
             )
         
         if not permitted_headers_str:

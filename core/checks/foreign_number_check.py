@@ -15,7 +15,7 @@ async def validate_foreign_number_check(sms, pool):
         # Get foreign number validation setting
         async with pool.acquire() as conn:
             foreign_validation_enabled = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'foreign_number_validation'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'foreign_number_validation'"
             )
             
             if foreign_validation_enabled != 'true':
@@ -23,7 +23,7 @@ async def validate_foreign_number_check(sms, pool):
             
             # Get allowed country codes
             allowed_codes_json = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'allowed_country_codes'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'allowed_country_codes'"
             )
         
         # Parse allowed country codes

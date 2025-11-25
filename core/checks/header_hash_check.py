@@ -18,7 +18,7 @@ async def validate_header_hash_check(sms, pool):
         # Get permitted headers from settings
         async with pool.acquire() as conn:
             permitted_headers_str = await conn.fetchval(
-                "SELECT setting_value FROM system_settings WHERE setting_key = 'permitted_headers'"
+                "SELECT setting_value FROM sms_settings WHERE setting_key = 'permitted_headers'"
             )
         
         if not permitted_headers_str:

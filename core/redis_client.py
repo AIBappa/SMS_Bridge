@@ -81,6 +81,10 @@ class RedisPool:
         """Get all members of a set"""
         return await self.retry(self.pool.smembers(key))
 
+    async def scard(self, key: str) -> int:
+        """Get cardinality (count) of a set"""
+        return await self.retry(self.pool.scard(key))
+
     async def srem(self, key: str, *members: str):
         """Remove members from a set"""
         return await self.retry(self.pool.srem(key, *members))

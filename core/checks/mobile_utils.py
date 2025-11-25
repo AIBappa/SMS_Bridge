@@ -22,7 +22,7 @@ async def normalize_mobile_number(mobile_number: str, pool, default_country_code
     # Get allowed country codes from settings
     async with pool.acquire() as conn:
         allowed_codes_json = await conn.fetchval(
-            "SELECT setting_value FROM system_settings WHERE setting_key = 'allowed_country_codes'"
+            "SELECT setting_value FROM sms_settings WHERE setting_key = 'allowed_country_codes'"
         )
     
     try:
