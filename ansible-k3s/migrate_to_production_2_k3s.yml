@@ -532,6 +532,113 @@
       debug:
         msg: "Health check: {{ health_check.json }}"
 
+          Rebuilding container image...
+
+    # ============================================
+    # REBUILD AND REDEPLOY WITH FIXED CODE
+    # ============================================
+    - name: Remove old Docker image marker
+      file:
+        path: "{{ project_dir }}/.image_built"
+        state: absent
+
+    - name: Check if docker is available
+      command: which docker
+      register: docker_available
+      failed_when: false
+
+    - name: Check if buildah is available
+      command: which buildah
+      register: buildah_available
+      failed_when: false
+
+    - name: Build updated SMS receiver image with Docker
+      shell: |
+        cd {{ project_dir }}
+        docker rmi {{ python_receiver_image }}:latest || true
+        sudo k3s ctr images rm docker.io/library/{{ python_receiver_image }}:latest || true
+        docker build -t {{ python_receiver_image }}:latest .
+        docker save {{ python_receiver_image }}:latest | sudo k3s ctr images import -
+      when: docker_available.rc == 0
+
+    - name: Build updated SMS receiver image with Buildah
+      shell: |
+        cd {{ project_dir }}
+        buildah rmi {{ python_receiver_image }}:latest || true
+        sudo k3s ctr images rm docker.io/library/{{ python_receiver_image }}:latest || true
+        buildah build -t {{ python_receiver_image }}:latest .
+        buildah push {{ python_receiver_image }}:latest oci-archive:/tmp/{{ python_receiver_image }}.tar
+        sudo k3s ctr images import /tmp/{{ python_receiver_image }}.tar
+        rm -f /tmp/{{ python_receiver_image }}.tar
+      when: docker_available.rc != 0 and buildah_available.rc == 0
+
+    - name: Force restart SMS receiver deployment with new fixed image
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: sms-receiver
+            namespace: "{{ namespace }}"
+          spec:
+            template:
+              metadata:
+                annotations:
+                  kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+                  migration.sms-bridge/code-fixed: "{{ backup_timestamp }}"
+              spec:
+                containers:
+                - name: sms-receiver
+                  image: "{{ python_receiver_image }}:latest"
+                  imagePullPolicy: Never
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Wait for SMS receiver to be ready with fixed code
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: sms-receiver
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 180
+
+    - name: Wait for pod to be fully running
+      pause:
+        seconds: 15
+        prompt: "Waiting for pod startup to complete..."
+
+    - name: Check logs after code fix
+      shell: |
+        kubectl logs deployment/sms-receiver -n {{ namespace }} --tail=30
+      register: fixed_logs
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Display fixed logs
+      debug:
+        msg: |
+          Logs after code fix:
+          {{ fixed_logs.stdout }}
+
+    - name: Verify health endpoint after code fix
+      uri:
+        url: "http://localhost:30080/health"
+        method: GET
+        return_content: yes
+      register: health_check_fixed
+      retries: 5
+      delay: 2
+      until: health_check_fixed.status == 200
+
+    - name: Display fixed health check
+      debug:
+        msg: "Health check after code fix: {{ health_check_fixed.json }}"
+
     - name: Test Admin UI endpoint
       uri:
         url: "http://localhost:30080/admin/settings/ui"
