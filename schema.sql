@@ -166,7 +166,12 @@ VALUES
     
     -- Monitoring
     ('log_level', 'INFO', 'string', 'monitoring', 'Application log level (DEBUG, INFO, WARNING, ERROR)'),
-    ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)')
+    ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)'),
+    
+    -- Batch Processor Settings
+    ('batch_size', '100', 'integer', 'batch', 'Number of SMS to process per batch'),
+    ('batch_timeout', '2.0', 'string', 'batch', 'Timeout in seconds to wait for batch to fill'),
+    ('last_processed_uuid', '00000000-0000-0000-0000-000000000000', 'string', 'batch', 'Last processed UUID for batch processor')
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- =====================================================

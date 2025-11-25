@@ -33,15 +33,9 @@ async def collect_once():
         blacklist_count = await redis_pool.scard('blacklist_mobiles')
         BLACKLIST_MOBILES_COUNT.set(blacklist_count)
 
-        # Count abuse keys using SCAN (avoid KEYS)
-        abuse_keys = 0
-        cursor = '0'
-        while True:
-            cursor, keys = await redis_pool.scan(cursor=cursor, match='abuse_counter:*', count=100)
-            abuse_keys += len(keys)
-            if cursor == '0' or cursor == 0:
-                break
-        ABUSE_COUNTER_KEYS.set(abuse_keys)
+        # Count abuse keys using scan (returns all matching keys)
+        abuse_keys = await redis_pool.scan('abuse_counter:*')
+        ABUSE_COUNTER_KEYS.set(len(abuse_keys))
 
     except Exception as e:
         logger.error(f"Error collecting observability metrics from Redis: {e}")

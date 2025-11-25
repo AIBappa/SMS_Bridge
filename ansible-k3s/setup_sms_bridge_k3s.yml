@@ -83,6 +83,17 @@
         - "{{ project_dir }}/grafana/provisioning/datasources"
         - "{{ project_dir }}/grafana/provisioning/dashboards"
 
+    # Clean up old application files before copying new ones
+    - name: Remove old core application directory
+      file:
+        path: "{{ project_dir }}/core"
+        state: absent
+
+    - name: Remove old schema file
+      file:
+        path: "{{ project_dir }}/schema.sql"
+        state: absent
+
     # Copy application files
     - name: Copy PostgreSQL initialization script
       copy:
@@ -147,20 +158,33 @@
         path: "{{ project_dir }}/.image_built"
         state: absent
 
-    - name: Build SMS receiver image with Docker
+    - name: Remove old container image from Docker
+      shell: |
+        docker rmi -f {{ python_receiver_image }}:latest 2>/dev/null || true
+      when: docker_available.rc == 0
+      failed_when: false
+
+    - name: Remove old container image from K3s
+      shell: |
+        sudo k3s ctr images rm docker.io/library/{{ python_receiver_image }}:latest 2>/dev/null || true
+      become: yes
+      become_method: sudo
+      failed_when: false
+
+    - name: Build SMS receiver image with Docker (no cache)
       shell: |
         cd {{ project_dir }}
-        docker build -t {{ python_receiver_image }}:latest .
+        docker build --no-cache -t {{ python_receiver_image }}:latest .
         # Save and import into K3s
         docker save {{ python_receiver_image }}:latest | sudo k3s ctr images import -
       when: docker_available.rc == 0
       become: yes
       become_method: sudo
 
-    - name: Build SMS receiver image with Buildah
+    - name: Build SMS receiver image with Buildah (no cache)
       shell: |
         cd {{ project_dir }}
-        buildah build -t {{ python_receiver_image }}:latest .
+        buildah build --no-cache -t {{ python_receiver_image }}:latest .
         # Push to K3s containerd
         buildah push {{ python_receiver_image }}:latest containers-storage:{{ python_receiver_image }}:latest
         buildah push {{ python_receiver_image }}:latest oci-archive:/tmp/{{ python_receiver_image }}.tar
@@ -1090,6 +1114,12 @@
         state: present
         src: "{{ project_dir }}/k3s-manifests/13-sms-receiver.yaml"
         kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+    - name: Force restart SMS receiver to use new image
+      shell: |
+        kubectl rollout restart deployment/sms-receiver -n {{ namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
 
     - name: Wait for all deployments to be ready
       kubernetes.core.k8s_info:
