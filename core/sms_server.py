@@ -1021,6 +1021,14 @@ app.mount("/static", StaticFiles(directory="core/static"), name="static")
 templates = Jinja2Templates(directory="core/templates")
 
 
+@app.get("/", response_class=HTMLResponse)
+async def landing_page(request: Request):
+    """
+    Landing page with links to SMS Simulator and Settings Panel.
+    """
+    return templates.TemplateResponse("landing.html", {"request": request})
+
+
 @app.get("/admin/settings/ui", response_class=HTMLResponse)
 async def admin_settings_ui(request: Request):
     """
