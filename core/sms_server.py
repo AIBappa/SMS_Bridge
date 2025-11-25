@@ -254,34 +254,11 @@ async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
             "country_code": sms.country_code
         })
         
-        # Also update sms_monitor table directly (keep existing behavior)
-        async with pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO sms_monitor (uuid, overall_status, failed_at_check, processing_completed_at, 
-                                         blacklist_check, duplicate_check, foreign_number_check, header_hash_check, 
-                                         mobile_check, time_window_check, country_code, local_mobile)
-                VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, $8, $9, $10, $11)
-                ON CONFLICT (uuid) DO UPDATE SET 
-                    overall_status = EXCLUDED.overall_status,
-                    failed_at_check = EXCLUDED.failed_at_check,
-                    processing_completed_at = EXCLUDED.processing_completed_at,
-                    blacklist_check = EXCLUDED.blacklist_check,
-                    duplicate_check = EXCLUDED.duplicate_check,
-                    foreign_number_check = EXCLUDED.foreign_number_check,
-                    header_hash_check = EXCLUDED.header_hash_check,
-                    mobile_check = EXCLUDED.mobile_check,
-                    time_window_check = EXCLUDED.time_window_check,
-                    country_code = EXCLUDED.country_code,
-                    local_mobile = EXCLUDED.local_mobile
-            """, sms.uuid, overall_status, failed_check, *results.values(), sms.country_code, sms.local_mobile)
+        # Production_2: No sms_monitor table - validation results logged in Redis queue only
+        # The input_sms table already has check result columns for audit
         
         if overall_status == 'valid':
-            # Insert to out_sms and Redis using structured mobile data
-            async with pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO out_sms (uuid, sender_number, sms_message, country_code, local_mobile) 
-                    VALUES ($1, $2, $3, $4, $5)
-                """, sms.uuid, sms.sender_number, sms.sms_message, sms.country_code, sms.local_mobile)
+            # Production_2: No out_sms table - validated numbers go to Redis SET only
             redis_client.sadd('out_sms_numbers', sms.local_mobile)
             await redis_pool.sadd('out_sms_numbers', sms.local_mobile)  # Also add to async Redis
             
@@ -306,10 +283,10 @@ async def batch_processor():
     
     Process flow:
     1. Read batch size and timeout settings from the settings table
-    2. Query input_sms for new rows where uuid > last processed UUID
+    2. Query input_sms for new rows where id > last processed ID
     3. If rows < batch_size: wait for batch_timeout or more rows
     4. Process available batch (1 to batch_size rows)
-    5. Update last processed UUID and repeat
+    5. Update last processed ID and repeat
     """
     logger.info("Starting advanced batch processor...")
     
@@ -334,23 +311,24 @@ async def batch_processor():
                             ON CONFLICT (setting_key) DO UPDATE SET setting_value = '2.0'
                         """)
                 
-                last_uuid = await get_setting('last_processed_uuid')
+                last_processed_id_str = await get_setting('last_processed_id')
+                last_processed_id = int(last_processed_id_str) if last_processed_id_str else 0
             except Exception as e:
                 logger.error(f"Failed to read batch processor settings: {e}")
                 await asyncio.sleep(5)
                 continue
             
-            logger.debug(f"Batch processor config: size={batch_size}, timeout={batch_timeout}s, last_uuid={last_uuid}")
+            logger.debug(f"Batch processor config: size={batch_size}, timeout={batch_timeout}s, last_id={last_processed_id}")
             
             # Query for new rows
             async with pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT uuid, sender_number, sms_message, received_timestamp, country_code, local_mobile 
+                    SELECT id, mobile_number, sms_message, received_timestamp, country_code, local_mobile 
                     FROM input_sms 
-                    WHERE uuid > $1::uuid
-                    ORDER BY uuid 
+                    WHERE id > $1
+                    ORDER BY id 
                     LIMIT $2
-                """, last_uuid, batch_size)
+                """, last_processed_id, batch_size)
             
             initial_row_count = len(rows)
             logger.debug(f"Found {initial_row_count} new SMS messages to process")
@@ -379,12 +357,12 @@ async def batch_processor():
                     # Check for new rows during timeout
                     async with pool.acquire() as conn:
                         updated_rows = await conn.fetch("""
-                            SELECT uuid, sender_number, sms_message, received_timestamp, country_code, local_mobile 
+                            SELECT id, mobile_number, sms_message, received_timestamp, country_code, local_mobile 
                             FROM input_sms 
-                            WHERE uuid > $1::uuid
-                            ORDER BY uuid 
+                            WHERE id > $1
+                            ORDER BY id 
                             LIMIT $2
-                        """, last_uuid, batch_size)
+                        """, last_processed_id, batch_size)
                     
                     if len(updated_rows) >= batch_size:
                         logger.debug(f"Batch size ({batch_size}) reached during timeout, proceeding immediately")
@@ -401,24 +379,23 @@ async def batch_processor():
             if rows:
                 logger.info(f"Processing batch of {len(rows)} SMS messages")
                 
-                # Convert UUID objects to strings for Pydantic model
+                # Build batch data for processing
                 batch_data = []
                 for row in rows:
                     row_dict = dict(row)
-                    row_dict['uuid'] = str(row_dict['uuid'])  # Convert UUID to string
                     batch_data.append(BatchSMSData(**row_dict))
                 
                 # Run validation checks
                 await run_validation_checks(batch_data)
                 
-                # Update last_processed_uuid to the highest UUID in this batch
-                new_last_uuid = rows[-1]['uuid']
+                # Update last_processed_id to the highest ID in this batch
+                new_last_id = rows[-1]['id']
                 async with pool.acquire() as conn:
                     await conn.execute("""
-                        UPDATE sms_settings SET setting_value = $1 WHERE setting_key = 'last_processed_uuid'
-                    """, str(new_last_uuid))
+                        UPDATE sms_settings SET setting_value = $1 WHERE setting_key = 'last_processed_id'
+                    """, str(new_last_id))
                 
-                logger.info(f"Batch processing completed. Updated last_processed_uuid to: {new_last_uuid}")
+                logger.info(f"Batch processing completed. Updated last_processed_id to: {new_last_id}")
             
             # Brief pause before next iteration
             await asyncio.sleep(0.1)
@@ -519,7 +496,7 @@ async def receive_sms(request: Request, background_tasks: BackgroundTasks):
         # Insert to database with structured mobile data
         async with pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO input_sms (sender_number, sms_message, received_timestamp, country_code, local_mobile) 
+                INSERT INTO input_sms (mobile_number, sms_message, received_timestamp, country_code, local_mobile) 
                 VALUES ($1, $2, $3, $4, $5)
             """, sms_data.sender_number, sms_data.sms_message, sms_data.received_timestamp, country_code, local_mobile)
         
@@ -725,28 +702,18 @@ async def get_onboarding_status(mobile_number: str):
         
         async with pool.acquire() as conn:
             onboarding_record = await conn.fetchrow(
-                "SELECT mobile_number, request_timestamp, is_active FROM onboarding_mobile WHERE mobile_number = $1",
+                "SELECT mobile_number, request_timestamp, is_active, sms_validated FROM onboarding_mobile WHERE mobile_number = $1",
                 mobile_number
             )
             
             if not onboarding_record:
                 raise HTTPException(status_code=404, detail="Mobile number not found in onboarding system")
-            
-            # Check if any SMS has been successfully validated for this mobile
-            sms_validated = await conn.fetchval("""
-                SELECT EXISTS(
-                    SELECT 1 FROM input_sms i 
-                    JOIN sms_monitor m ON i.uuid = m.uuid 
-                    WHERE i.sms_message LIKE '%' || $1 || '%' 
-                    AND m.overall_status = 'valid'
-                )
-            """, mobile_number)
         
         return {
             "mobile_number": onboarding_record['mobile_number'],
             "request_timestamp": onboarding_record['request_timestamp'],
             "is_active": onboarding_record['is_active'],
-            "sms_validated": sms_validated
+            "sms_validated": onboarding_record['sms_validated']
         }
         
     except HTTPException:

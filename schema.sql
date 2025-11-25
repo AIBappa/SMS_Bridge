@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS onboarding_mobile (
     request_timestamp TIMESTAMPTZ DEFAULT NOW(),
     user_deadline TIMESTAMPTZ,
     expires_at TIMESTAMPTZ,
+    is_active BOOLEAN DEFAULT TRUE,
     is_validated BOOLEAN DEFAULT FALSE,
+    sms_validated BOOLEAN DEFAULT FALSE,
     validated_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -64,6 +66,8 @@ CREATE INDEX IF NOT EXISTS idx_onboard_mobile ON onboarding_mobile (mobile_numbe
 CREATE INDEX IF NOT EXISTS idx_onboard_hash ON onboarding_mobile (hash);
 CREATE INDEX IF NOT EXISTS idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
 CREATE INDEX IF NOT EXISTS idx_onboard_device ON onboarding_mobile (device_id);
+CREATE INDEX IF NOT EXISTS idx_onboard_active ON onboarding_mobile (is_active);
+CREATE INDEX IF NOT EXISTS idx_onboard_sms_validated ON onboarding_mobile (sms_validated);
 
 -- =====================================================
 -- 3. blacklist_sms - Persistent blacklist
@@ -171,7 +175,16 @@ VALUES
     -- Batch Processor Settings
     ('batch_size', '100', 'integer', 'batch', 'Number of SMS to process per batch'),
     ('batch_timeout', '2.0', 'string', 'batch', 'Timeout in seconds to wait for batch to fill'),
-    ('last_processed_uuid', '00000000-0000-0000-0000-000000000000', 'string', 'batch', 'Last processed UUID for batch processor')
+    ('last_processed_id', '0', 'integer', 'batch', 'Last processed ID for batch processor'),
+    
+    -- Additional Validation Settings
+    ('permitted_headers', 'ONBOARD,VERIFY,AUTH', 'string', 'validation', 'Comma-separated list of permitted SMS headers'),
+    ('validation_time_window', '300', 'integer', 'validation', 'Time window in seconds for SMS validation'),
+    ('foreign_number_validation', 'true', 'boolean', 'validation', 'Enable foreign number validation'),
+    
+    -- Check Sequence and Enable Flags (JSON)
+    ('check_sequence', '["mobile", "duplicate", "header_hash", "count", "foreign_number", "blacklist", "time_window"]', 'json', 'validation', 'Order of validation checks'),
+    ('check_enabled', '{"mobile": true, "duplicate": true, "header_hash": true, "count": true, "foreign_number": true, "blacklist": true, "time_window": true}', 'json', 'validation', 'Enable flags for each check')
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- =====================================================
