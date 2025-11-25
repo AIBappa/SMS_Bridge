@@ -204,8 +204,8 @@
               processed_at TIMESTAMPTZ
           );
           
-          CREATE INDEX idx_powerdown_processed ON power_down_store (processed);
-          CREATE INDEX idx_powerdown_stored_at ON power_down_store (stored_at);
+          CREATE INDEX IF NOT EXISTS idx_powerdown_processed ON power_down_store (processed);
+          CREATE INDEX IF NOT EXISTS idx_powerdown_stored_at ON power_down_store (stored_at);
           
           -- Step 6: Create power_down_store_counters table
           CREATE TABLE IF NOT EXISTS power_down_store_counters (
@@ -262,6 +262,23 @@
     - name: Display migration script created
       debug:
         msg: "Migration script created at {{ project_dir }}/migration_production_2.sql"
+
+    - name: Update postgres-init ConfigMap with Production_2 schema
+      kubernetes.core.k8s:
+        state: present
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: postgres-init
+            namespace: "{{ namespace }}"
+          data:
+            init.sql: |
+              -- Production_2 schema initialization
+              -- This ConfigMap ensures PostgreSQL maintains the correct schema after restarts
+              \i /docker-entrypoint-initdb.d/schema.sql;
+            schema.sql: "{{ lookup('file', project_dir + '/migration_production_2.sql') }}"
 
     - name: Copy migration script to PostgreSQL pod
       shell: |
@@ -587,7 +604,7 @@
           
           Rollback (if needed):
           - Restore database: kubectl exec <postgres-pod-name> -n {{ namespace }} -- psql -U postgres sms_bridge < {{ backup_dir }}/sms_bridge_backup_{{ backup_timestamp }}.sql
-            (Replace <postgres-pod-name> with: kubectl get pods -n {{ namespace }} -l app=postgres -o jsonpath='{{.items[0].metadata.name}}')
+            (Replace <postgres-pod-name> with: kubectl get pods -n {{ namespace }} -l app=postgres -o jsonpath='{.items[0].metadata.name}')
           ========================================
 
     - name: Create migration report file
