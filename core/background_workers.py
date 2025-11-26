@@ -34,20 +34,19 @@ async def get_db_pool():
         statement_cache_size=0  # Required for PgBouncer
     )
 
-async def abuse_detector_worker(blacklist_threshold: int = 10, interval: int = 60):
+async def abuse_detector_worker(pool, blacklist_threshold: int = 10, interval: int = 60):
     """
     Periodically checks abuse_counter:* keys, blacklists mobiles exceeding threshold,
     and resets keys. Production_2: No count_sms table - counters in Redis only.
     
     Args:
+        pool: PostgreSQL connection pool
         blacklist_threshold: Number of abuse attempts before blacklisting
         interval: How often to run the check (in seconds)
     """
     logger.info(f"Starting abuse detector worker (threshold={blacklist_threshold}, interval={interval}s)")
-    pool = None
     
     try:
-        pool = await get_db_pool()
         
         while True:
             try:
@@ -101,9 +100,6 @@ async def abuse_detector_worker(blacklist_threshold: int = 10, interval: int = 6
             
     except Exception as e:
         logger.error(f"Fatal error in abuse detector worker: {e}")
-    finally:
-        if pool:
-            await pool.close()
 
 async def sms_monitor_logger(batch_size: int = 100, interval: int = 30):
     """
@@ -414,7 +410,7 @@ async def start_background_workers():
     monitor_interval = int(os.getenv('MONITOR_LOG_INTERVAL', 30))
     
     # Start legacy workers (if needed)
-    asyncio.create_task(abuse_detector_worker(abuse_threshold, abuse_interval))
+    asyncio.create_task(abuse_detector_worker(pool, abuse_threshold, abuse_interval))
     asyncio.create_task(sms_monitor_logger(monitor_batch_size, monitor_interval))
     
     # Start Production_2 workers

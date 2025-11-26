@@ -1,6 +1,9 @@
 import json
 import re
+import logging
 from .mobile_utils import normalize_mobile_number
+
+logger = logging.getLogger(__name__)
 
 async def validate_foreign_number_check(sms, pool):
     """
@@ -47,5 +50,5 @@ async def validate_foreign_number_check(sms, pool):
         
     except Exception as e:
         # Log error and fail safely
-        print(f"Error in foreign_number_check: {e}")
+        logger.error(f"Error in foreign_number_check: {e}")
         return 2  # fail on error

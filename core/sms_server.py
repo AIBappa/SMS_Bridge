@@ -180,6 +180,39 @@ async def get_setting(key: str):
         except (json.JSONDecodeError, TypeError):
             return result
 
+async def process_sms_data(sms_data: SMSInput, background_tasks: BackgroundTasks):
+    """
+    Process SMS data directly without requiring a Request object.
+    Used by test endpoints and batch processing.
+    """
+    try:
+        # Extract country code and local mobile for structured storage
+        from checks.mobile_utils import normalize_mobile_number
+        pool = await get_db_pool()
+        country_code, local_mobile = await normalize_mobile_number(sms_data.sender_number, pool)
+        
+        # Log the processed SMS data
+        logger.info(f"=== SMS RECEIVED ===")
+        logger.info(f"Sender Number: {sms_data.sender_number}")
+        logger.info(f"Country Code: {country_code}")
+        logger.info(f"Local Mobile: {local_mobile}")
+        logger.info(f"SMS Message: {sms_data.sms_message}")
+        logger.info(f"Received Timestamp: {sms_data.received_timestamp}")
+        logger.info(f"=== END SMS DATA ===")
+        
+        # Insert to database with structured mobile data
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO input_sms (mobile_number, sms_message, received_timestamp, country_code, local_mobile) 
+                VALUES ($1, $2, $3, $4, $5)
+            """, sms_data.sender_number, sms_data.sms_message, sms_data.received_timestamp, country_code, local_mobile)
+        
+        return {"status": "success", "message": "SMS received and queued for processing"}
+        
+    except Exception as e:
+        logger.error(f"Error processing SMS data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing SMS: {str(e)}")
+
 async def run_validation_checks(batch_sms_data: List[BatchSMSData]):
     check_sequence = await get_setting('check_sequence')
     check_enabled = await get_setting('check_enabled')
@@ -1189,9 +1222,9 @@ async def test_send_single(data: TestSMSRequest):
             received_timestamp=received_dt
         )
         
-        # Call the main sms_receive endpoint
+        # Call the SMS processing function
         background_tasks = BackgroundTasks()
-        result = await sms_receive(sms_input, background_tasks)
+        result = await process_sms_data(sms_input, background_tasks)
         
         return {"success": True, "response": result}
         
@@ -1250,7 +1283,7 @@ async def test_upload_file(file: UploadFile = File(...)):
                 
                 # Submit SMS
                 background_tasks = BackgroundTasks()
-                result = await sms_receive(sms_input, background_tasks)
+                result = await process_sms_data(sms_input, background_tasks)
                 
                 results.append({
                     'row': index + 1,

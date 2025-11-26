@@ -46,7 +46,7 @@ async def blacklist_check(
         # Check if blacklist_check is enabled
         if get_setting_func:
             enabled = await get_setting_func('blacklist_check_enabled', default='true')
-            if enabled.lower() != 'true':
+            if str(enabled).lower() != 'true':
                 logger.info(f"Blacklist check disabled for {mobile_number}")
                 return (3, "blacklist_check_disabled")
         

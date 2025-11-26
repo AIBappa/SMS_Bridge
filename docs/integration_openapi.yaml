@@ -169,10 +169,10 @@ components:
           type: string
       required: [mobile_number, message, received_at]
       example:
-  mobile_number: +9199XXYYZZAA
+        mobile_number: "+9199XXYYZZAA"
         message: "ONBOARD:a06f0b7..."
         received_at: '2025-09-19T12:00:00Z'
-  sender: +9199XXYYZZAA
+        sender: "+9199XXYYZZAA"
 
     SmsReceiveResponse:
       type: object
@@ -217,9 +217,9 @@ components:
           format: date-time
       required: [mobile_number, country_code, local_mobile, message, received_timestamp, validation_results, batch_id, processed_at]
       example:
-  mobile_number: +9199XXYYZZAA
+        mobile_number: "+9199XXYYZZAA"
         country_code: '91'
-  local_mobile: '99XXYYZZAA'
+        local_mobile: '99XXYYZZAA'
         message: 'ONBOARD:abc123def456...'
         received_timestamp: '2025-09-19T12:00:00Z'
         validation_results:
