@@ -460,7 +460,7 @@ async def startup_event():
             )
             for row in numbers:
                 # Use async Redis pool (Redis-first architecture)
-                await redis_pool.sadd('validated_numbers', row['local_mobile'])
+                await redis_pool.sadd('Queue_validated_mobiles', row['local_mobile'])
         logger.info(f"Redis cache warmed up with {len(numbers)} validated numbers from onboarding_mobile")
     except Exception as e:
         logger.warning(f"Cache warmup skipped (Production_2 tables may not exist yet): {e}")
