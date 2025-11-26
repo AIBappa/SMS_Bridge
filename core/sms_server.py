@@ -186,7 +186,7 @@ async def process_sms_data(sms_data: SMSInput, background_tasks: BackgroundTasks
     """
     try:
         # Extract country code and local mobile for structured storage
-        from checks.mobile_utils import normalize_mobile_number
+        from core.checks.mobile_utils import normalize_mobile_number
         pool = await get_db_pool()
         country_code, local_mobile = await normalize_mobile_number(sms_data.sender_number, pool)
         
