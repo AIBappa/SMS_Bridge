@@ -11,7 +11,6 @@ from typing import List, Optional
 import asyncpg
 import redis
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, Depends
-from fastapi.routing import APIRoute
 from pydantic import BaseModel
 import requests
 from core.redis_client import redis_pool  # Async Redis pool for Redis-first architecture
