@@ -758,7 +758,7 @@ async def webhook_validated(request: Request):
         timestamp = data.get('timestamp', '')
         validation_results = data.get('validation_results', {})
         
-        logger.info(f"Received webhook for mobile: {mobile_number}, message: {message}")
+        logger.info(f"Received webhook for mobile: {mobile_number}, message: {message}, validation_results: {validation_results}")
         
         # Process the validated message
         # This is where you'd update your database or trigger other actions
