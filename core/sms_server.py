@@ -7,7 +7,7 @@ import hashlib
 import uuid as uuid_module
 import re
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import List, Optional
 import asyncpg
 import redis
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Header, Depends
