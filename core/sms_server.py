@@ -4,7 +4,6 @@ import asyncio
 import logging
 import secrets
 import hashlib
-import uuid as uuid_module
 import re
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
