@@ -662,8 +662,8 @@ async def register_mobile_geoprasidh(mobile_number: str, api_key: str = Depends(
         try:
             from observability.metrics import SMS_ONBOARD_REQUESTS
             SMS_ONBOARD_REQUESTS.inc()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to increment SMS_ONBOARD_REQUESTS metric: {e}")
         logger.info(f"Stored onboard hash in Redis for {normalized_mobile} (TTL: 24h)")
         
         # Log to monitor queue for async audit (non-blocking)
