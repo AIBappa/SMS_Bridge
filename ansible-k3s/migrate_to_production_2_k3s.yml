@@ -532,8 +532,9 @@
       debug:
         msg: "Health check: {{ health_check.json }}"
 
-          Rebuilding container image...
-
+     # ============================================
+     # REBUILD AND REDEPLOY WITH FIXED CODE
+     # ============================================
     # ============================================
     # REBUILD AND REDEPLOY WITH FIXED CODE
     # ============================================
