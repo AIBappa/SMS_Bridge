@@ -1,5 +1,4 @@
 from prometheus_client import Gauge, Counter
-from prometheus_client.core import CollectorRegistry
 import asyncio
 import logging
 from typing import Optional
