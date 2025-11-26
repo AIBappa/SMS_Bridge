@@ -1,5 +1,4 @@
 from prometheus_client import Gauge, Counter
-import asyncio
 import logging
 from typing import Optional
 from core.redis_client import redis_pool
