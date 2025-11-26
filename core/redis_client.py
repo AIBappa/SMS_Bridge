@@ -6,7 +6,7 @@ Provides both sync (redis.StrictRedis) and async (RedisPool) interfaces.
 import redis
 import os
 import asyncio
-from typing import Any, Optional, Union, List, Dict
+from typing import Any, Optional, List, Dict
 import logging
 
 logger = logging.getLogger(__name__)
