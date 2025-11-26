@@ -1,6 +1,5 @@
 from prometheus_client import make_asgi_app
 from starlette.requests import Request
-import asyncio
 import logging
 
 from .metrics import collect_once
