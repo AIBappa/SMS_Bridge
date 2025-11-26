@@ -154,23 +154,23 @@ class RedisPool:
 
     async def hset(self, key: str, field: str, value: Any):
         """Set field in hash"""
-        return await self.retry(self.pool.hset(key, field, value))
+        return await self.retry(lambda: self.pool.hset(key, field, value))
 
     async def hmset(self, key: str, mapping: Dict[str, Any]):
         """Set multiple fields in hash"""
-        return await self.retry(self.pool.hset(key, mapping=mapping))
+        return await self.retry(lambda: self.pool.hset(key, mapping=mapping))
 
     async def hget(self, key: str, field: str) -> Optional[str]:
         """Get field from hash"""
-        return await self.retry(self.pool.hget(key, field))
+        return await self.retry(lambda: self.pool.hget(key, field))
 
     async def hgetall(self, key: str) -> Dict[str, str]:
         """Get all fields from hash"""
-        return await self.retry(self.pool.hgetall(key))
+        return await self.retry(lambda: self.pool.hgetall(key))
 
     async def ttl(self, key: str) -> int:
         """Get TTL of key"""
-        return await self.retry(self.pool.ttl(key))
+        return await self.retry(lambda: self.pool.ttl(key))
 
     async def add_to_queue_onboarding(
         self,
