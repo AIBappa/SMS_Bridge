@@ -6,7 +6,6 @@ These workers run independently and never block the main SMS processing flow.
 import asyncio
 import json
 import logging
-from typing import Dict, Any, List
 from core.redis_client import redis_pool
 import asyncpg
 import os
