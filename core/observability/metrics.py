@@ -1,6 +1,5 @@
 from prometheus_client import Gauge, Counter
 import logging
-from typing import Optional
 from core.redis_client import redis_pool
 
 logger = logging.getLogger(__name__)
