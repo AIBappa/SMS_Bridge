@@ -144,8 +144,8 @@ async def sms_monitor_logger(batch_size: int = 100, interval: int = 30):
                         try:
                             if SMS_MONITOR_EVENTS_PROCESSED:
                                 SMS_MONITOR_EVENTS_PROCESSED.inc(len(events))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Failed to increment SMS_MONITOR_EVENTS_PROCESSED: {e}")
                     
                     # Remove processed events from queue
                     await redis_pool.ltrim("sms_monitor_queue", len(events_raw), -1)
