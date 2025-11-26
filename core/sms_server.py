@@ -517,7 +517,6 @@ async def register_mobile(request: OnboardingRequest):
         mobile_number = request.mobile_number.strip()
         
         # Validate mobile number format
-        import re
         if not re.match(r'^\d{10,15}$', mobile_number):
             raise HTTPException(status_code=400, detail="Invalid mobile number format")
         
