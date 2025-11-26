@@ -822,7 +822,6 @@ async def webhook_validated(request: Request):
         data = await request.json()
         mobile_number = data.get('mobile_number', '')
         message = data.get('message', '')
-        timestamp = data.get('timestamp', '')
         validation_results = data.get('validation_results', {})
         
         logger.info(f"Received webhook for mobile: {mobile_number}, message: {message}, validation_results: {validation_results}")
