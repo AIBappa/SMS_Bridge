@@ -58,8 +58,10 @@ class RedisPool:
                 logger.warning(f"Redis operation failed (attempt {attempt + 1}/{retries}): {e}")
                 await asyncio.sleep(delay * (2 ** attempt))
         logger.error(f"Redis operation failed after {retries} retries: {last_exc}")
-        raise last_exc
-
+        if last_exc is not None:
+            raise last_exc
+        else:
+            raise RuntimeError("Redis operation failed after retries, but no exception was captured.")
     # Redis primitives with retry logic
     async def setex(self, key: str, ttl: int, value: Any):
         """Set key with expiration"""
