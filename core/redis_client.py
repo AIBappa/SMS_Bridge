@@ -137,7 +137,7 @@ class RedisPool:
         """Health check for Redis connection"""
         try:
             return await self.retry(self.pool.ping())
-        except:
+        except Exception:
             return False
 
     async def close(self):
