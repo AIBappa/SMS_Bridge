@@ -17,6 +17,7 @@
     namespace: "sms-bridge"
     backup_dir: "{{ project_dir }}/backups"
     backup_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    python_receiver_image: "sms_receiver_image"
 
   tasks:
     - name: Display migration start message

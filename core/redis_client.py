@@ -47,12 +47,12 @@ class RedisPool:
             logger.error(f"Failed to initialize Redis pool: {e}")
             raise
 
-    async def retry(self, coro, retries=3, delay=0.2):
+    async def retry(self, coro_factory, retries=3, delay=0.2):
         """Retry a coroutine with exponential backoff"""
         last_exc = None
         for attempt in range(retries):
             try:
-                return await coro
+                return await coro_factory()
             except Exception as e:
                 last_exc = e
                 logger.warning(f"Redis operation failed (attempt {attempt + 1}/{retries}): {e}")
@@ -65,61 +65,61 @@ class RedisPool:
     # Redis primitives with retry logic
     async def setex(self, key: str, ttl: int, value: Any):
         """Set key with expiration"""
-        return await self.retry(self.pool.setex(key, ttl, value))
+        return await self.retry(lambda: self.pool.setex(key, ttl, value))
 
     async def get(self, key: str) -> Optional[str]:
         """Get value by key"""
-        return await self.retry(self.pool.get(key))
+        return await self.retry(lambda: self.pool.get(key))
 
     async def sadd(self, key: str, *members: str):
         """Add members to a set"""
-        return await self.retry(self.pool.sadd(key, *members))
+        return await self.retry(lambda: self.pool.sadd(key, *members))
 
     async def sismember(self, key: str, member: str) -> bool:
         """Check if member exists in set"""
-        return await self.retry(self.pool.sismember(key, member))
+        return await self.retry(lambda: self.pool.sismember(key, member))
 
     async def smembers(self, key: str) -> set:
         """Get all members of a set"""
-        return await self.retry(self.pool.smembers(key))
+        return await self.retry(lambda: self.pool.smembers(key))
 
     async def scard(self, key: str) -> int:
         """Get cardinality (count) of a set"""
-        return await self.retry(self.pool.scard(key))
+        return await self.retry(lambda: self.pool.scard(key))
 
     async def srem(self, key: str, *members: str):
         """Remove members from a set"""
-        return await self.retry(self.pool.srem(key, *members))
+        return await self.retry(lambda: self.pool.srem(key, *members))
 
     async def incr(self, key: str) -> int:
         """Increment key by 1"""
-        return await self.retry(self.pool.incr(key))
+        return await self.retry(lambda: self.pool.incr(key))
 
     async def lpush(self, key: str, *values: Any):
         """Push values to head of list"""
         import json
         # Serialize dict/list values to JSON
         serialized = [json.dumps(v) if isinstance(v, (dict, list)) else str(v) for v in values]
-        return await self.retry(self.pool.lpush(key, *serialized))
+        return await self.retry(lambda: self.pool.lpush(key, *serialized))
 
     async def lrange(self, key: str, start: int, end: int) -> List[str]:
         """Get range of elements from list"""
-        return await self.retry(self.pool.lrange(key, start, end))
+        return await self.retry(lambda: self.pool.lrange(key, start, end))
 
     async def ltrim(self, key: str, start: int, end: int):
         """Trim list to specified range"""
-        return await self.retry(self.pool.ltrim(key, start, end))
+        return await self.retry(lambda: self.pool.ltrim(key, start, end))
 
     async def llen(self, key: str) -> int:
         """Get length of list"""
-        return await self.retry(self.pool.llen(key))
+        return await self.retry(lambda: self.pool.llen(key))
 
     async def scan(self, match: str, count: int = 100) -> List[str]:
         """Scan for keys matching pattern"""
         cursor = 0
         results = []
         while True:
-            cursor, keys = await self.retry(self.pool.scan(cursor=cursor, match=match, count=count))
+            cursor, keys = await self.retry(lambda: self.pool.scan(cursor=cursor, match=match, count=count))
             results.extend(keys)
             if cursor == 0:
                 break
@@ -129,16 +129,16 @@ class RedisPool:
         """Delete one or more keys"""
         if not keys:
             return 0
-        return await self.retry(self.pool.delete(*keys))
+        return await self.retry(lambda: self.pool.delete(*keys))
 
     async def expire(self, key: str, ttl: int):
         """Set expiration on key"""
-        return await self.retry(self.pool.expire(key, ttl))
+        return await self.retry(lambda: self.pool.expire(key, ttl))
 
     async def ping(self) -> bool:
         """Health check for Redis connection"""
         try:
-            return await self.retry(self.pool.ping())
+            return await self.retry(lambda: self.pool.ping())
         except Exception:
             return False
 
