@@ -10,7 +10,6 @@ Production_2 Architecture:
 """
 
 import logging
-from datetime import datetime
 from typing import Tuple
 
 logger = logging.getLogger(__name__)
