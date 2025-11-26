@@ -6,7 +6,7 @@ import secrets
 import hashlib
 import uuid as uuid_module
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 import asyncpg
 import redis
@@ -537,7 +537,9 @@ async def register_mobile(request: OnboardingRequest, api_key: str = Depends(ver
 
         if cached_hash:
             # Return cached response
-            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            now = datetime.now(timezone.utc)
+            next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            expires_at = next_hour.isoformat().replace('+00:00', 'Z')
             return GeoPrasidhOnboardingResponse(
                 mobile_number=mobile_number,  # Return original format with +
                 hash=cached_hash.decode('utf-8') if isinstance(cached_hash, bytes) else cached_hash,
@@ -571,7 +573,9 @@ async def register_mobile(request: OnboardingRequest, api_key: str = Depends(ver
                 # Cache in Redis (24 hour TTL)
                 await redis_pool.setex(cache_key, 86400, computed_hash)
 
-                expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+                now = datetime.now(timezone.utc)
+                next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+                expires_at = next_hour.isoformat().replace('+00:00', 'Z')
                 return GeoPrasidhOnboardingResponse(
                     mobile_number=mobile_number,  # Return original format
                     hash=computed_hash,
@@ -619,7 +623,9 @@ async def register_mobile(request: OnboardingRequest, api_key: str = Depends(ver
         await redis_pool.setex(cache_key, 86400, computed_hash)
 
         # Generate expires_at timestamp (1 hour from now, rounded to next hour)
-        expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+        now = datetime.now(timezone.utc)
+        next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+        expires_at = next_hour.isoformat().replace('+00:00', 'Z')
 
         return GeoPrasidhOnboardingResponse(
             mobile_number=mobile_number,  # Return original format with +
@@ -667,7 +673,9 @@ async def get_onboard_status_geoprasidh(mobile_number: str, api_key: str = Depen
         cached_hash = await redis_pool.get(cache_key)
 
         if cached_hash:
-            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            now = datetime.now(timezone.utc)
+            next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            expires_at = next_hour.isoformat().replace('+00:00', 'Z')
             logger.warning(f"GET /onboard/status/{mobile_number} - Deprecated endpoint used (Redis cache hit)")
             return GeoPrasidhOnboardingResponse(
                 mobile_number=mobile_number,
@@ -698,7 +706,9 @@ async def get_onboard_status_geoprasidh(mobile_number: str, api_key: str = Depen
             # Cache the hash for future reads
             await redis_pool.setex(cache_key, 86400, existing['hash'])
 
-            expires_at = (datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(hour=datetime.now(timezone.utc).hour + 1)).isoformat().replace('+00:00', 'Z')
+            now = datetime.now(timezone.utc)
+            next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            expires_at = next_hour.isoformat().replace('+00:00', 'Z')
 
             logger.warning(f"GET /onboard/status/{mobile_number} - Deprecated endpoint used (DB query)")
 
@@ -979,7 +989,6 @@ async def register_mobile_production_2(request: OnboardRegisterRequest, api_key:
         expires_at = (now + timedelta(seconds=redis_ttl_seconds)).isoformat()
         
         # Store in Redis queue_onboarding:{mobile}
-        from datetime import timedelta
         await redis_pool.add_to_queue_onboarding(
             mobile_number=mobile_with_prefix,
             email=request.email,
