@@ -466,8 +466,61 @@ async def startup_event():
         logger.warning(f"Cache warmup skipped (Production_2 tables may not exist yet): {e}")
 
     
-    # Start batch processor
-    asyncio.create_task(batch_processor())
+    # Start batch processor with proper task management
+    def batch_processor_done_callback(task: asyncio.Task):
+        """Callback to log unhandled exceptions from batch processor"""
+        try:
+            exc = task.exception()
+            if exc is not None:
+                logger.error(f"Batch processor task failed with exception: {exc}", exc_info=exc)
+        except asyncio.CancelledError:
+            logger.info("Batch processor task was cancelled")
+        except asyncio.InvalidStateError:
+            pass  # Task not done yet, shouldn't happen in done callback
+    
+    batch_task = asyncio.create_task(batch_processor())
+    batch_task.add_done_callback(batch_processor_done_callback)
+    app.state.batch_processor_task = batch_task
+    logger.info("Batch processor task started and registered for lifecycle management")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean shutdown of background tasks and connections"""
+    logger.info("Shutting down SMS Bridge...")
+    
+    # Cancel and await batch processor task
+    if hasattr(app.state, 'batch_processor_task') and app.state.batch_processor_task:
+        task = app.state.batch_processor_task
+        if not task.done():
+            logger.info("Cancelling batch processor task...")
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=5.0)
+            except asyncio.CancelledError:
+                logger.info("Batch processor task cancelled successfully")
+            except asyncio.TimeoutError:
+                logger.warning("Batch processor task did not terminate within timeout")
+            except Exception as e:
+                logger.error(f"Error while awaiting batch processor task: {e}")
+    
+    # Close Redis pool
+    try:
+        await redis_pool.close()
+        logger.info("Redis pool closed")
+    except Exception as e:
+        logger.error(f"Error closing Redis pool: {e}")
+    
+    # Close database pool
+    global pool
+    if pool is not None:
+        try:
+            await pool.close()
+            logger.info("Database pool closed")
+        except Exception as e:
+            logger.error(f"Error closing database pool: {e}")
+    
+    logger.info("SMS Bridge shutdown complete")
 
 @app.post("/sms/receive")
 async def receive_sms(request: Request, background_tasks: BackgroundTasks):

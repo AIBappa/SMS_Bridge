@@ -55,9 +55,15 @@
         kubeconfig: /etc/rancher/k3s/k3s.yaml
       register: postgres_pods
 
+    - name: Fail if no PostgreSQL pod found
+      fail:
+        msg: "No PostgreSQL pod found in namespace '{{ namespace }}' with label 'app=postgres'. Ensure the postgres deployment is running before migration."
+      when: postgres_pods.resources | length == 0
+
     - name: Set PostgreSQL pod name
       set_fact:
         postgres_pod: "{{ postgres_pods.resources[0].metadata.name }}"
+      when: postgres_pods.resources | length > 0
 
     - name: Create PostgreSQL backup
       shell: |
