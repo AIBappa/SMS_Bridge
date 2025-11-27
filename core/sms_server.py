@@ -354,7 +354,7 @@ async def batch_processor():
             # Query for new rows
             async with pool.acquire() as conn:
                 rows = await conn.fetch("""
-                    SELECT id, mobile_number, sms_message, received_timestamp, country_code, local_mobile 
+                    SELECT id AS uuid, mobile_number AS sender_number, sms_message, received_timestamp, country_code, local_mobile 
                     FROM input_sms 
                     WHERE id > $1
                     ORDER BY id 
@@ -388,7 +388,7 @@ async def batch_processor():
                     # Check for new rows during timeout
                     async with pool.acquire() as conn:
                         updated_rows = await conn.fetch("""
-                            SELECT id, mobile_number, sms_message, received_timestamp, country_code, local_mobile 
+                            SELECT id AS uuid, mobile_number AS sender_number, sms_message, received_timestamp, country_code, local_mobile 
                             FROM input_sms 
                             WHERE id > $1
                             ORDER BY id 
@@ -420,7 +420,7 @@ async def batch_processor():
                 await run_validation_checks(batch_data)
                 
                 # Update last_processed_id to the highest ID in this batch
-                new_last_id = rows[-1]['id']
+                new_last_id = rows[-1]['uuid']
                 async with pool.acquire() as conn:
                     await conn.execute("""
                         UPDATE sms_settings SET setting_value = $1 WHERE setting_key = 'last_processed_id'

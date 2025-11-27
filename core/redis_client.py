@@ -346,7 +346,7 @@ class RedisPool:
     async def get_setting_value(
         self,
         setting_key: str,
-        default: str = None
+        default: Optional[str] = None
     ) -> Optional[str]:
         """
         Get setting value with 60s Redis cache.
@@ -356,7 +356,7 @@ class RedisPool:
         
         Args:
             setting_key: Setting name from sms_settings table
-            default: Default value if not found
+            default: Optional[str] - Default value if not found
             
         Returns:
             Setting value or default

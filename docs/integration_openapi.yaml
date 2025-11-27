@@ -233,7 +233,7 @@ components:
         processed_at: '2025-09-19T12:00:01Z'
 
 paths:
-  /onboard/register:
+  /onboarding/register:
     post:
       summary: Generate or return onboarding hash for mobile number
       description: >-
