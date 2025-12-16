@@ -175,8 +175,8 @@ class RedisPool:
     async def add_to_queue_onboarding(
         self,
         mobile_number: str,
-        email: str,
-        device_id: str,
+        email: Optional[str],
+        device_id: Optional[str],
         hash_value: str,
         salt: str,
         country_code: str,
@@ -202,8 +202,8 @@ class RedisPool:
             # Store onboarding data in HASH
             await self.hmset(queue_key, {
                 'mobile_number': mobile_number,
-                'email': email,
-                'device_id': device_id,
+                'email': email or '',
+                'device_id': device_id or '',
                 'hash': hash_value,
                 'salt': salt,
                 'country_code': country_code,
@@ -307,7 +307,7 @@ class RedisPool:
     async def mark_mobile_validated(
         self,
         mobile_number: str,
-        device_id: str
+        device_id: Optional[str]
     ) -> bool:
         """
         Add mobile+device to Queue_validated_mobiles SET.
@@ -316,13 +316,13 @@ class RedisPool:
         Used for duplicate detection.
         """
         try:
-            composite_key = f"{mobile_number}:{device_id}"
+            composite_key = f"{mobile_number}:{device_id or 'unknown'}"
             await self.sadd('Queue_validated_mobiles', composite_key)
             
             logger.info(f"Marked validated: {composite_key}")
             return True
         except Exception as e:
-            logger.error(f"Failed to mark validated {mobile_number}:{device_id}: {e}", exc_info=True)
+            logger.error(f"Failed to mark validated {mobile_number}:{device_id or 'unknown'}: {e}", exc_info=True)
             return False
 
     async def get_next_id(self, counter_name: str) -> int:

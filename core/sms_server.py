@@ -977,10 +977,10 @@ VALIDATION_FUNCTIONS = {
 # ========================================
 
 class OnboardRegisterRequest(BaseModel):
-    """Production_2 onboarding request with email and device_id"""
+    """Production_2 onboarding request with optional email and device_id"""
     mobile_number: str
-    email: str
-    device_id: str
+    email: Optional[str] = None
+    device_id: Optional[str] = None
 
 
 class OnboardHashResponse(BaseModel):
@@ -1026,7 +1026,7 @@ async def register_mobile_production_2(request: OnboardRegisterRequest, api_key:
         # REDIS-FIRST CHECKS
         
         # Check if already validated (duplicate check)
-        composite_key = f"{mobile_with_prefix}:{request.device_id}"
+        composite_key = f"{mobile_with_prefix}:{request.device_id or 'unknown'}"
         if await redis_pool.sismember('Queue_validated_mobiles', composite_key):
             raise HTTPException(status_code=409, detail="Mobile+device already validated")
         
@@ -1104,7 +1104,7 @@ async def register_mobile_production_2(request: OnboardRegisterRequest, api_key:
                 now + timedelta(seconds=redis_ttl_seconds)
             )
         
-        logger.info(f"Onboarding registered: {mobile_with_prefix} (email={request.email}, device={request.device_id})")
+        logger.info(f"Onboarding registered: {mobile_with_prefix} (email={request.email or 'None'}, device={request.device_id or 'None'})")
         
         return OnboardHashResponse(
             status="success",
