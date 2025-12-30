@@ -214,7 +214,6 @@ components:
         validation_results:
           header_hash_check: 1
           foreign_number_check: 1
-          duplicate_check: 1
           count_check: 1
           blacklist_check: 1
         batch_id: uuid-string-here

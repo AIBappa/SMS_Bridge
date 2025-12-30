@@ -147,22 +147,23 @@ config:current	String	Cached JSON settings from Postgres.	N/A
             - Validate: country_code in allowed_countries
             - If not in list → FAIL
 
-        3. Duplicate Check:
-            - Check: EXISTS verified:{mobile}
-            - If exists (already verified) → FAIL
-
-        4. Count Check:
+        3. Count Check:
             - INCR limit:sms:{mobile}
             - Check: count <= count_threshold
             - If exceeded → FAIL
 
-        5. Blacklist Check:
+        4. Blacklist Check:
             - Check: SISMEMBER blacklist_mobiles {mobile}
             - If blacklisted → FAIL
 
         On All Pass:
+            - DELETE active_onboarding:{hash}
             - SET verified:{mobile} = hash (TTL 15m)
             - Log SMS_VERIFIED to audit_buffer
+
+    Note: Duplicate SMS prevention is handled by deleting active_onboarding:{hash}
+          on successful validation. Subsequent SMS with same hash will fail at
+          header_hash_check (hash not found).
 
     Check Status Codes: 1=pass, 2=fail, 3=disabled
 
