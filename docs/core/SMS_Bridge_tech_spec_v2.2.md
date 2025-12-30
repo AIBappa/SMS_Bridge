@@ -11,6 +11,27 @@ The system uses a Dual-Queue Architecture to separate high-speed API logic from 
 
     Admin UI: A secure, tabbed dashboard for Configuration Management and Test Simulation.
 
+1.1 Python Requirements
+
+    Core Dependencies:
+        - fastapi>=0.100.0          # Web framework
+        - uvicorn[standard]         # ASGI server
+        - pydantic>=2.0             # Data validation
+        - sqlalchemy>=2.0           # ORM for Postgres
+        - psycopg2-binary           # Postgres driver
+        - sqladmin>=0.15            # Admin UI
+        - redis>=5.0                # Redis client (sync)
+        - passlib[bcrypt]           # Password hashing
+        - httpx>=0.25               # HTTP client for sync_url calls
+        - python-dotenv             # Environment variables
+
+    Background Workers:
+        - apscheduler>=3.10         # Scheduled tasks (sync_interval, log_interval)
+
+    Optional (Production):
+        - gunicorn                  # Production WSGI
+        - prometheus-client         # Metrics export
+
 2. Admin UI & Configuration (SQLAdmin)
 
 Use SQLAdmin to provide a GUI with two primary sections (Tabs/Views).
@@ -85,6 +106,46 @@ C. Tab 2: Test Lab (Simulation GUI)
 | limit:sms:{mobile} | String | Rate limit counter | 1h |
 | config:current | String | Cached JSON settings from Postgres | N/A |
 | blacklist_mobiles | Set | Blacklisted mobile numbers | N/A |
+
+3.1 Redis Operations Reference
+
+    Connection:
+        - Client: redis-py (synchronous)
+        - Pool: ConnectionPool(max_connections=10, decode_responses=True)
+        - Health: PING every 30s via health check
+
+    Operations by Endpoint:
+
+        /onboarding/register:
+            - GET config:current (load settings)
+            - INCR limit:sms:{mobile} + EXPIRE 3600 (rate limit)
+            - HSET active_onboarding:{hash} mobile {mobile} expires_at {ts}
+            - EXPIRE active_onboarding:{hash} {ttl_hash_seconds}
+
+        /sms/receive:
+            - GET config:current (load settings)
+            - EXISTS active_onboarding:{hash} (header_hash_check)
+            - INCR limit:sms:{mobile} (count_check)
+            - SISMEMBER blacklist_mobiles {mobile} (blacklist_check)
+            - MULTI/EXEC: DELETE active_onboarding:{hash} + SET verified:{mobile}
+            - LPUSH audit_buffer (log event)
+
+        /pin-setup:
+            - GET config:current (load settings)
+            - GET verified:{mobile} (check verification)
+            - LPUSH sync_queue (hot path)
+            - LPUSH audit_buffer (cold path)
+            - DEL verified:{mobile} (one-time use)
+
+        Background Workers:
+            - RPOP sync_queue (Sync Worker)
+            - LPUSH retry_queue (on failure)
+            - RPOP audit_buffer (Audit Worker)
+
+    Error Handling:
+        - ConnectionError: Trigger power-down dump to Postgres
+        - TimeoutError: Retry 3x with exponential backoff
+        - All errors: Log to audit_buffer (if available) or stdout
 
 4. API Specification
 4.1 POST /onboarding/register (Backend Call)
@@ -173,9 +234,13 @@ C. Tab 2: Test Lab (Simulation GUI)
             - If disabled → status code 3, continue
 
         On All Pass:
-            - DELETE active_onboarding:{hash}
-            - SET verified:{mobile} = hash (TTL 15m)
-            - Log SMS_VERIFIED to audit_buffer
+            Execute atomically (Redis MULTI/EXEC):
+                - DELETE active_onboarding:{hash}
+                - SET verified:{mobile} = hash (TTL 15m)
+            Log SMS_VERIFIED to audit_buffer
+
+            Note: MULTI/EXEC ensures crash safety. If process dies between
+            DELETE and SET, both operations either complete or neither does.
 
     Note: Duplicate SMS prevention is handled by deleting active_onboarding:{hash}
           on successful validation. Subsequent SMS with same hash will fail at
