@@ -1,14 +1,40 @@
-# SMS Bridge Server Dependencies
-asyncpg==0.30.0
-redis==5.2.1
-requests==2.32.5
-fastapi==0.116.1
-uvicorn==0.32.1
-psycopg2-binary==2.9.10
-python-multipart==0.0.18
-pydantic==2.10.3
-pandas==2.3.3
-openpyxl==3.1.5
-jinja2==3.1.6
+# SMS Bridge v2.2 Dependencies
 
-prometheus-client==0.23.1
+# Core Framework
+fastapi>=0.116.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+
+# Database
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+
+# Redis
+redis>=5.2
+
+# Admin UI
+sqladmin>=0.15
+
+# Authentication
+passlib[bcrypt]>=1.7
+
+# HTTP Client (outbound sync_url calls)
+httpx>=0.25
+
+# Environment
+python-dotenv>=1.0
+
+# Background Workers
+apscheduler>=3.10
+
+# Form parsing (SMS webhook)
+python-multipart>=0.0.18
+
+# Templates
+jinja2>=3.1
+
+# Optional: Production
+gunicorn>=21.0
+
+# Optional: Monitoring
+prometheus-client>=0.23
