@@ -87,11 +87,13 @@ config:current	String	Cached JSON settings from Postgres.	N/A
             - Method: Base32(HMAC-SHA256(input, hmac_secret))[:hash_length]
             - Result: Fixed-length unique key (e.g., "A3B7K2M9")
         5. Store active_onboarding:{hash} → {mobile, expires_at}.
+           TTL set from ttl_hash_seconds setting.
         6. Log HASH_GEN to audit_buffer.
 
     Verification Note:
         Hash is used as direct lookup key. No recomputation required.
         SMS validation extracts hash from message and checks EXISTS active_onboarding:{hash}.
+        If Redis key expired (TTL), hash not found → validation fails.
 
     Request Body:
         {
@@ -107,16 +109,20 @@ config:current	String	Cached JSON settings from Postgres.	N/A
           "hash": "A3B7K2M9",
           "generated_at": "2025-01-15T12:00:00Z",
           "user_deadline": "2025-01-15T12:05:00Z",
-          "user_timelimit_seconds": 300,
-          "expires_at": "2025-01-16T12:00:00Z",
-          "redis_ttl_seconds": 86400
+          "user_timelimit_seconds": 300
         }
+
+    Response Field Notes:
+        - sms_receiving_number: Number user sends SMS to
+        - hash: Include in SMS body after prefix (e.g., "ONBOARD:A3B7K2M9")
+        - user_deadline: Display to user (informational soft deadline)
+        - user_timelimit_seconds: Countdown value for UI timer
 
     Settings Used:
         - hmac_secret: Secret key for HMAC generation
         - hash_length: Output length (default: 8)
         - sms_receiver_number: Returned as sms_receiving_number
-        - ttl_hash_seconds: Sets user_timelimit_seconds
+        - ttl_hash_seconds: Sets Redis TTL for active_onboarding:{hash}
         - allowed_countries: Validates mobile prefix
         - count_threshold: Rate limit per mobile
 
@@ -125,25 +131,79 @@ config:current	String	Cached JSON settings from Postgres.	N/A
         - 403: Country not supported
         - 429: Rate limit exceeded
 
-4.2 POST /sms-webhook (From Gateway OR Test Lab)
+4.2 POST /sms/receive (From Gateway OR Test Lab)
 
-    Logic (The Gauntlet):
+    Logic (Sequential Validation Pipeline):
 
-        Length Check: len(msg) == Total_Expected.
+        1. Header Hash Check:
+            - Validate message length matches expected (prefix + hash_length)
+            - Validate message starts with allowed_prefix ("ONBOARD:")
+            - Extract hash from message
+            - Lookup: EXISTS active_onboarding:{hash}
+            - If not found (expired or invalid) → FAIL
 
-        Prefix Check: msg.startswith(allowed_prefix).
+        2. Foreign Number Check:
+            - Extract country code from sender mobile
+            - Validate: country_code in allowed_countries
+            - If not in list → FAIL
 
-        Country Check: sender in allowed_countries.
+        3. Duplicate Check:
+            - Check: EXISTS verified:{mobile}
+            - If exists (already verified) → FAIL
 
-        Verify: Match hash in active_onboarding:[Hash].
+        4. Count Check:
+            - INCR limit:sms:{mobile}
+            - Check: count <= count_threshold
+            - If exceeded → FAIL
 
-        Action: Set verified:[mobile] = hash. Log SMS_VERIFIED.
+        5. Blacklist Check:
+            - Check: SISMEMBER blacklist_mobiles {mobile}
+            - If blacklisted → FAIL
 
-4.3 POST /pin-setup (From Frontend)
+        On All Pass:
+            - SET verified:{mobile} = hash (TTL 15m)
+            - Log SMS_VERIFIED to audit_buffer
+
+    Check Status Codes: 1=pass, 2=fail, 3=disabled
+
+    Request Body:
+        {
+          "mobile_number": "+9199XXYYZZAA",
+          "message": "ONBOARD:A3B7K2M9",
+          "received_at": "2025-01-15T12:00:00Z"
+        }
+
+    Response:
+        {
+          "status": "received",
+          "message_id": "uuid",
+          "queued_for_processing": true
+        }
+
+4.3 GET /health
+
+    Purpose: Component health monitoring
+
+    Response:
+        {
+          "status": "healthy|degraded|unhealthy",
+          "service": "sms-bridge",
+          "version": "1.0.0",
+          "timestamp": "2025-01-15T12:00:00Z",
+          "checks": {
+            "database": "healthy|degraded|unhealthy",
+            "redis": "healthy|degraded|unhealthy",
+            "batch_processor": "running|stopped|degraded"
+          }
+        }
+
+    HTTP Status: 200 (healthy), 503 (degraded/unhealthy)
+
+4.4 POST /pin-setup (From Frontend)
 
     Logic:
 
-        Check verified:[mobile].
+        Check verified:{mobile}.
 
         Hot Path: Push {mobile, pin, hash} to sync_queue.
 
@@ -151,7 +211,7 @@ config:current	String	Cached JSON settings from Postgres.	N/A
 
     Response: 200 OK.
 
-4.4 POST /admin/trigger-recovery
+4.5 POST /admin/trigger-recovery
 
     Logic: Generate HMAC signature and call Supabase Edge /recover-dragonfly.
 

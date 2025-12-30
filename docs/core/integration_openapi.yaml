@@ -116,27 +116,18 @@ components:
         user_deadline:
           type: string
           format: date-time
-          description: User-facing deadline (5 minutes from now)
+          description: User-facing deadline for SMS submission (informational)
         user_timelimit_seconds:
           type: integer
-          description: Seconds until user_deadline (typically 300)
-        expires_at:
-          type: string
-          format: date-time
-          description: System expiry time (24 hours from now)
-        redis_ttl_seconds:
-          type: integer
-          description: Redis TTL in seconds (typically 86400)
-      required: [status, sms_receiving_number, hash, generated_at, user_deadline, user_timelimit_seconds, expires_at, redis_ttl_seconds]
+          description: Seconds until user_deadline (for UI countdown)
+      required: [status, sms_receiving_number, hash, generated_at, user_deadline, user_timelimit_seconds]
       example:
         status: success
-        sms_receiving_number: +919000000000
+        sms_receiving_number: '+919000000000'
         hash: A3B7K2M9
         generated_at: '2025-01-15T12:00:00Z'
         user_deadline: '2025-01-15T12:05:00Z'
         user_timelimit_seconds: 300
-        expires_at: '2025-01-16T12:00:00Z'
-        redis_ttl_seconds: 86400
 
     OnboardHashError:
       type: object
@@ -218,15 +209,14 @@ components:
         mobile_number: "+9199XXYYZZAA"
         country_code: '91'
         local_mobile: '99XXYYZZAA'
-        message: 'ONBOARD:abc123def456...'
-        received_timestamp: '2025-09-19T12:00:00Z'
+        message: 'ONBOARD:A3B7K2M9'
+        received_timestamp: '2025-01-15T12:00:00Z'
         validation_results:
-          foreign_number_check: 1
-          blacklist_check: 1
-          duplicate_check: 1
           header_hash_check: 1
-          mobile_check: 1
-          time_window_check: 1
+          foreign_number_check: 1
+          duplicate_check: 1
+          count_check: 1
+          blacklist_check: 1
         batch_id: uuid-string-here
         processed_at: '2025-09-19T12:00:01Z'
 
