@@ -46,8 +46,8 @@ B. Tab 1: Settings History (Version Control)
       "log_interval": 120,
       "count_threshold": 5,
       "allowed_countries": ["+91", "+44"],
-      "supabase_sync_url": "https://xxx.supabase.co/functions/v1/sms-verify",
-      "supabase_recovery_url": "https://xxx.supabase.co/functions/v1/recover-dragonfly",
+      "sync_url": "https://your-backend.com/api/validated-users",
+      "recovery_url": "https://your-backend.com/api/recover",
       "secrets": { "hmac_secret": "...", "hash_key": "..." }
     }
 
@@ -236,13 +236,13 @@ config:current	String	Cached JSON settings from Postgres.	N/A
     Logic:
         1. Load settings (config:current).
         2. Generate HMAC signature: HMAC-SHA256(timestamp, hmac_secret).
-        3. POST to supabase_recovery_url with:
+        3. POST to recovery_url (from settings) with:
            - Header: X-Signature (HMAC signature)
            - Header: X-Timestamp (current timestamp)
         4. Log RECOVERY_TRIGGERED to audit_buffer.
 
     Settings Used:
-        - supabase_recovery_url: Target endpoint
+        - recovery_url: Target endpoint
         - hmac_secret: For request signing
 
     Response:
@@ -258,20 +258,21 @@ config:current	String	Cached JSON settings from Postgres.	N/A
         - 500: Internal error
 
 5. Background Workers
-Sync Worker (Every 1s)
+Sync Worker (Every sync_interval seconds)
 
     1. Pop from sync_queue.
     2. Sign payload with HMAC-SHA256 using hmac_secret.
-    3. POST to supabase_sync_url (from settings) with:
+    3. POST to sync_url (from settings) with:
        - Header: X-Signature (HMAC signature)
        - Body: {mobile, pin, hash}
     4. On Failure: Push to retry_queue.
 
     Settings Used:
-        - supabase_sync_url: Target endpoint for validated data
+        - sync_url: Target endpoint for validated data
+        - sync_interval: Frequency in seconds (default: 1.0)
         - hmac_secret: For request signing
 
-Audit Worker (Every 120s)
+Audit Worker (Every log_interval seconds)
 
     Pop from audit_buffer.
 

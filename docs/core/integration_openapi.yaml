@@ -5,9 +5,8 @@ info:
   description: >-
     Machine-readable API specification for the SMS Bridge integration. This
     OpenAPI file describes inbound endpoints implemented by the SMS Bridge
-    (used by CF Hono backend and local mobile webhooks) and the outbound
-    webhook contract used when the SMS Bridge forwards validated messages to
-    an external Cloudflare backend.
+    and the outbound webhook contract used when the SMS Bridge forwards
+    validated user data to an external backend.
 servers:
   - url: https://your-tunnel-domain.com
     description: Public endpoint (via Cloudflare tunnel)
@@ -185,39 +184,17 @@ components:
         mobile_number:
           type: string
           description: E.164 format
-        country_code:
+        pin:
           type: string
-        local_mobile:
+          description: User-chosen PIN
+        hash:
           type: string
-        message:
-          type: string
-        received_timestamp:
-          type: string
-          format: date-time
-        validation_results:
-          type: object
-          additionalProperties:
-            type: integer
-            description: 1=pass,2=fail,3=skipped
-        batch_id:
-          type: string
-        processed_at:
-          type: string
-          format: date-time
-      required: [mobile_number, country_code, local_mobile, message, received_timestamp, validation_results, batch_id, processed_at]
+          description: Onboarding hash
+      required: [mobile_number, pin, hash]
       example:
-        mobile_number: "+9199XXYYZZAA"
-        country_code: '91'
-        local_mobile: '99XXYYZZAA'
-        message: 'ONBOARD:A3B7K2M9'
-        received_timestamp: '2025-01-15T12:00:00Z'
-        validation_results:
-          header_hash_check: 1
-          foreign_number_check: 1
-          count_check: 1
-          blacklist_check: 1
-        batch_id: uuid-string-here
-        processed_at: '2025-09-19T12:00:01Z'
+        mobile_number: '+9199XXYYZZAA'
+        pin: '123456'
+        hash: 'A3B7K2M9'
 
     PinSetupRequest:
       type: object
@@ -370,8 +347,11 @@ paths:
 
   /outbound/validated-sms:
     post:
-      summary: Outbound webhook contract for validated SMS (used by SMS Bridge)
-      description: External CF backend should accept this payload when the SMS Bridge forwards validated SMS
+      summary: Outbound webhook contract for validated user data
+      description: >-
+        External backend should accept this payload when the SMS Bridge forwards
+        validated user data (mobile + PIN + hash) after successful onboarding.
+        Posted to sync_url from settings at sync_interval frequency.
       security:
         - BearerAuth: []
       requestBody:
@@ -432,10 +412,10 @@ paths:
 
   /admin/trigger-recovery:
     post:
-      summary: Trigger manual recovery sync to Supabase
+      summary: Trigger manual recovery sync to backend
       description: >-
         Admin endpoint to manually trigger recovery process.
-        Generates HMAC signature and POSTs to supabase_recovery_url from settings.
+        Generates HMAC signature and POSTs to recovery_url from settings.
       security:
         - BearerAuth: []
       responses:
