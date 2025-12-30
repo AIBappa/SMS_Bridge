@@ -219,6 +219,52 @@ components:
         batch_id: uuid-string-here
         processed_at: '2025-09-19T12:00:01Z'
 
+    PinSetupRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 formatted mobile number
+        pin:
+          type: string
+          description: User-chosen PIN
+        hash:
+          type: string
+          description: Hash from onboarding verification
+      required: [mobile_number, pin, hash]
+      example:
+        mobile_number: '+9199XXYYZZAA'
+        pin: '123456'
+        hash: 'A3B7K2M9'
+
+    PinSetupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+      required: [status]
+      example:
+        status: success
+        message: PIN accepted, account creation in progress
+
+    TriggerRecoveryResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        triggered_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+      required: [status]
+      example:
+        status: success
+        triggered_at: '2025-01-15T12:00:00Z'
+        message: Recovery process initiated
+
 paths:
   /onboarding/register:
     post:
@@ -345,6 +391,74 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pin-setup:
+    post:
+      summary: Submit PIN after mobile verification
+      description: >-
+        Called after SMS verification passes. Checks verified:{mobile} exists,
+        validates hash, then pushes to sync_queue (hot path) and audit_buffer (cold path).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinSetupRequest'
+      responses:
+        '200':
+          description: PIN accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PinSetupResponse'
+        '400':
+          description: Mobile not verified or hash mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/trigger-recovery:
+    post:
+      summary: Trigger manual recovery sync to Supabase
+      description: >-
+        Admin endpoint to manually trigger recovery process.
+        Generates HMAC signature and POSTs to supabase_recovery_url from settings.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Recovery triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerRecoveryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Recovery endpoint unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
           content:
             application/json:
               schema:

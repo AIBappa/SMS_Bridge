@@ -46,6 +46,8 @@ B. Tab 1: Settings History (Version Control)
       "log_interval": 120,
       "count_threshold": 5,
       "allowed_countries": ["+91", "+44"],
+      "supabase_sync_url": "https://xxx.supabase.co/functions/v1/sms-verify",
+      "supabase_recovery_url": "https://xxx.supabase.co/functions/v1/recover-dragonfly",
       "secrets": { "hmac_secret": "...", "hash_key": "..." }
     }
 
@@ -203,29 +205,71 @@ config:current	String	Cached JSON settings from Postgres.	N/A
 4.4 POST /pin-setup (From Frontend)
 
     Logic:
+        1. Load settings (config:current).
+        2. Check EXISTS verified:{mobile}.
+           - If not found → 400 "Mobile not verified"
+        3. Validate hash matches verified:{mobile} value.
+           - If mismatch → 400 "Hash mismatch"
+        4. Hot Path: Push {mobile, pin, hash} to sync_queue.
+        5. Cold Path: Push {event: "PIN_COLLECTED", details: {...}} to audit_buffer.
+        6. DELETE verified:{mobile} (one-time use).
 
-        Check verified:{mobile}.
+    Request Body:
+        {
+          "mobile_number": "+9199XXYYZZAA",
+          "pin": "123456",
+          "hash": "A3B7K2M9"
+        }
 
-        Hot Path: Push {mobile, pin, hash} to sync_queue.
+    Response:
+        {
+          "status": "success",
+          "message": "PIN accepted, account creation in progress"
+        }
 
-        Cold Path: Push {event: "PIN_COLLECTED", details: {...}} to audit_buffer.
-
-    Response: 200 OK.
+    Error Responses:
+        - 400: Mobile not verified or hash mismatch
+        - 401: Unauthorized
 
 4.5 POST /admin/trigger-recovery
 
-    Logic: Generate HMAC signature and call Supabase Edge /recover-dragonfly.
+    Logic:
+        1. Load settings (config:current).
+        2. Generate HMAC signature: HMAC-SHA256(timestamp, hmac_secret).
+        3. POST to supabase_recovery_url with:
+           - Header: X-Signature (HMAC signature)
+           - Header: X-Timestamp (current timestamp)
+        4. Log RECOVERY_TRIGGERED to audit_buffer.
+
+    Settings Used:
+        - supabase_recovery_url: Target endpoint
+        - hmac_secret: For request signing
+
+    Response:
+        {
+          "status": "success",
+          "triggered_at": "2025-01-15T12:00:00Z",
+          "message": "Recovery process initiated"
+        }
+
+    Error Responses:
+        - 401: Unauthorized (admin auth failed)
+        - 502: Recovery endpoint unreachable
+        - 500: Internal error
 
 5. Background Workers
 Sync Worker (Every 1s)
 
-    Pop from sync_queue.
+    1. Pop from sync_queue.
+    2. Sign payload with HMAC-SHA256 using hmac_secret.
+    3. POST to supabase_sync_url (from settings) with:
+       - Header: X-Signature (HMAC signature)
+       - Body: {mobile, pin, hash}
+    4. On Failure: Push to retry_queue.
 
-    Sign payload with HMAC-SHA256.
-
-    POST to {supabase_url}/sms-verify.
-
-    On Failure: Push to retry_queue.
+    Settings Used:
+        - supabase_sync_url: Target endpoint for validated data
+        - hmac_secret: For request signing
 
 Audit Worker (Every 120s)
 
