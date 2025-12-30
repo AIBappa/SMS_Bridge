@@ -693,12 +693,12 @@
                   "panels": [
                     {
                       "id": 1,
-                      "title": "Recent SMS Received",
+                      "title": "Recent Logs (sms_bridge_logs)",
                       "type": "table",
                       "datasource": "PostgreSQL",
                       "targets": [
                         {
-                          "rawSql": "SELECT uuid, sender_number, sms_message, received_timestamp FROM input_sms ORDER BY received_timestamp DESC LIMIT 50",
+                          "rawSql": "SELECT id, event, details::text, created_at FROM sms_bridge_logs ORDER BY created_at DESC LIMIT 50",
                           "format": "table"
                         }
                       ],
@@ -711,12 +711,12 @@
                     },
                     {
                       "id": 2,
-                      "title": "SMS Processing Status",
+                      "title": "Backup Users (backup_users)",
                       "type": "table",
                       "datasource": "PostgreSQL",
                       "targets": [
                         {
-                          "rawSql": "SELECT uuid, overall_status, failed_at_check, processing_completed_at FROM sms_monitor ORDER BY processing_completed_at DESC LIMIT 50",
+                          "rawSql": "SELECT id, mobile, hash, created_at, CASE WHEN synced_at IS NULL THEN 'pending' ELSE 'synced' END as sync_status FROM backup_users ORDER BY created_at DESC LIMIT 50",
                           "format": "table"
                         }
                       ],
@@ -729,19 +729,37 @@
                     },
                     {
                       "id": 3,
-                      "title": "Out SMS Queue",
+                      "title": "Settings History (settings_history)",
                       "type": "table",
                       "datasource": "PostgreSQL",
                       "targets": [
                         {
-                          "rawSql": "SELECT uuid, sender_number, sms_message FROM out_sms ORDER BY uuid DESC LIMIT 50",
+                          "rawSql": "SELECT version_id, is_active, created_at, created_by, change_note FROM settings_history ORDER BY created_at DESC LIMIT 20",
                           "format": "table"
                         }
                       ],
                       "gridPos": {
                         "h": 8,
-                        "w": 24,
+                        "w": 12,
                         "x": 0,
+                        "y": 16
+                      }
+                    },
+                    {
+                      "id": 4,
+                      "title": "Blacklist (blacklist_mobiles)",
+                      "type": "table",
+                      "datasource": "PostgreSQL",
+                      "targets": [
+                        {
+                          "rawSql": "SELECT id, mobile, reason, created_at, created_by FROM blacklist_mobiles ORDER BY created_at DESC LIMIT 50",
+                          "format": "table"
+                        }
+                      ],
+                      "gridPos": {
+                        "h": 8,
+                        "w": 12,
+                        "x": 12,
                         "y": 16
                       }
                     }
