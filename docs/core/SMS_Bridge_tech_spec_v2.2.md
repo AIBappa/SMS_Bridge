@@ -75,21 +75,55 @@ verified:[mobile]	String	Flag set after SMS match. Value=hash.	15m
 limit:sms:[mobile]	String	Rate limit counter.	1h
 config:current	String	Cached JSON settings from Postgres.	N/A
 4. API Specification
-4.1 POST /onboard (From Supabase Edge)
+4.1 POST /onboarding/register (Backend Call)
 
     Logic:
+        1. Load settings (config:current).
+        2. Validate country: Extract prefix from mobile_number,
+           reject if not in allowed_countries.
+        3. Rate limit: INCR limit:sms:{mobile}, reject if > count_threshold.
+        4. Generate Hash:
+            - Input: Mobile + Server_Timestamp (recorded at request arrival)
+            - Method: Base32(HMAC-SHA256(input, hmac_secret))[:hash_length]
+            - Result: Fixed-length unique key (e.g., "A3B7K2M9")
+        5. Store active_onboarding:{hash} → {mobile, expires_at}.
+        6. Log HASH_GEN to audit_buffer.
 
-        Load settings (config:current).
+    Verification Note:
+        Hash is used as direct lookup key. No recomputation required.
+        SMS validation extracts hash from message and checks EXISTS active_onboarding:{hash}.
 
-        Check allowed_countries and limit:sms:[mobile].
+    Request Body:
+        {
+          "mobile_number": "+9199XXYYZZAA"
+        }
 
-        Generate Hash: Base32(HMAC(Mobile + Time))[:hash_length].
+    Optional Fields: email, device_id (stored if provided)
 
-        Store active_onboarding:[Hash].
+    Response:
+        {
+          "status": "success",
+          "sms_receiving_number": "+919000000000",
+          "hash": "A3B7K2M9",
+          "generated_at": "2025-01-15T12:00:00Z",
+          "user_deadline": "2025-01-15T12:05:00Z",
+          "user_timelimit_seconds": 300,
+          "expires_at": "2025-01-16T12:00:00Z",
+          "redis_ttl_seconds": 86400
+        }
 
-        Log HASH_GEN to audit_buffer.
+    Settings Used:
+        - hmac_secret: Secret key for HMAC generation
+        - hash_length: Output length (default: 8)
+        - sms_receiver_number: Returned as sms_receiving_number
+        - ttl_hash_seconds: Sets user_timelimit_seconds
+        - allowed_countries: Validates mobile prefix
+        - count_threshold: Rate limit per mobile
 
-    Response: { "hash_code": "...", "sms_number": "..." }.
+    Error Responses:
+        - 400: Validation error (invalid mobile format)
+        - 403: Country not supported
+        - 429: Rate limit exceeded
 
 4.2 POST /sms-webhook (From Gateway OR Test Lab)
 

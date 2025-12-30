@@ -91,27 +91,25 @@ components:
         email:
           type: string
           format: email
-          description: Email address for onboarding
+          description: Email address for onboarding (optional)
         device_id:
           type: string
-          description: Unique device identifier
-      required: [mobile_number, email, device_id]
+          description: Unique device identifier (optional)
+      required: [mobile_number]
       example:
         mobile_number: +9199XXYYZZAA
-        email: user@example.com
-        device_id: device_abc123xyz
 
     OnboardHashResponse:
       type: object
       properties:
         status:
           type: string
-        mobile_number:
+        sms_receiving_number:
           type: string
-          description: E.164 formatted mobile number
+          description: The number user should send SMS to
         hash:
           type: string
-          description: 64-hex SHA-256 hash used for onboarding
+          description: Fixed-length Base32 hash for onboarding (length from settings)
         generated_at:
           type: string
           format: date-time
@@ -129,15 +127,15 @@ components:
         redis_ttl_seconds:
           type: integer
           description: Redis TTL in seconds (typically 86400)
-      required: [status, mobile_number, hash, user_deadline, user_timelimit_seconds, expires_at, redis_ttl_seconds]
+      required: [status, sms_receiving_number, hash, generated_at, user_deadline, user_timelimit_seconds, expires_at, redis_ttl_seconds]
       example:
         status: success
-        mobile_number: +9199XXYYZZAA
-        hash: a06f0b785d6613cadec3ed12c27e07615427bf1b79d091e9e8da22070ad14f7d
-        generated_at: '2025-09-19T12:00:00Z'
-        user_deadline: '2025-09-19T12:05:00Z'
+        sms_receiving_number: +919000000000
+        hash: A3B7K2M9
+        generated_at: '2025-01-15T12:00:00Z'
+        user_deadline: '2025-01-15T12:05:00Z'
         user_timelimit_seconds: 300
-        expires_at: '2025-09-20T12:00:00Z'
+        expires_at: '2025-01-16T12:00:00Z'
         redis_ttl_seconds: 86400
 
     OnboardHashError:
@@ -237,7 +235,7 @@ paths:
     post:
       summary: Generate or return onboarding hash for mobile number
       description: >-
-        Accepts mobile number, email, and device_id to generate an onboarding hash.
+        Accepts mobile number to generate an onboarding hash. Optional fields: email, device_id.
         Returns dual time windows: user_deadline (5 min) for user action, and expires_at (24h) for system retention.
       security:
         - BearerAuth: []
