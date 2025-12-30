@@ -125,9 +125,37 @@ redis-cli -a $REDIS_PASSWORD SLOWLOG GET 10
 - **Redis Cache**: Port 6379
 - **Prometheus**: Port 9090
 - **Grafana**: Port 3001
-- **SMS Receiver**: Port 8080
+- **SMS Bridge API**: Port 8000
+- **SMS Bridge Admin UI**: http://localhost:8000/admin
 - **Postgres Exporter**: Port 9187
 - **Redis Exporter**: Port 9121
+
+### SMS Bridge Admin UI Setup
+
+The Admin UI is accessible at `http://localhost:8000/admin` after deployment.
+
+#### Creating Initial Admin User
+
+After deploying the application, create the first admin user:
+
+```bash
+# Using the init script (interactive mode)
+cd /home/<user>/Documents/Software/SMS_Laptop_Setup/sms_bridge
+python scripts/init_sms_bridge.py -i
+
+# Or with command-line arguments
+python scripts/init_sms_bridge.py --create-admin --username admin --password <your-password> --email admin@example.com
+
+# Initialize database and create default settings
+python scripts/init_sms_bridge.py --init-db --create-settings
+```
+
+#### Admin UI Features
+- **Settings History**: View and create configuration versions (append-only)
+- **Logs**: View SMS Bridge audit logs
+- **Blacklist**: Manage blacklisted mobile numbers
+- **Backup Users**: View fallback mode entries
+- **Admin Users**: Manage admin accounts
 
 ### Retrieving Passwords from Vault
 All passwords are encrypted in `vault.yml`. To access:
