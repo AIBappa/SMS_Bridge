@@ -432,29 +432,82 @@ CREATE INDEX idx_powerdown_key ON power_down_store(key_name);
 
 7. Power-Down Resilience
 
-    Trigger: Redis connection failure detected by health check or API call.
+    Note: This is SEPARATE from the Audit Flow (audit_buffer → sms_bridge_logs).
+    Audit Worker runs every log_interval regardless of Redis health.
+    Power-down logic triggers ONLY on Redis issue detection.
 
-    Dump Process:
-        1. Read all active Redis keys matching patterns:
-           - active_onboarding:*
-           - verified:*
-           - limit:sms:*
+    A. Detection Triggers:
+        - /health endpoint detects Redis latency > 500ms → "degraded"
+        - /health endpoint detects Redis connection failure → "unhealthy"
+        - Any API call receives Redis ConnectionError
+
+    B. State Dump (On Degraded/Unhealthy Detection):
+        1. Attempt to read Redis keys (best effort, may fail):
+           - SCAN active_onboarding:*
+           - SCAN verified:*
         2. Insert each key into power_down_store with:
            - key_name: Full Redis key
-           - key_type: "hash", "string", "set"
+           - key_type: "hash", "string"
            - value: JSON representation of data
            - original_ttl: Remaining TTL (if any)
+        3. Log REDIS_DUMP_TRIGGERED to Postgres directly (bypass audit_buffer)
 
-    Recovery Process:
-        1. On Redis reconnection, read power_down_store.
-        2. Restore each key to Redis with appropriate TTL.
-        3. Delete restored rows from power_down_store.
-        4. Log REDIS_RECOVERED to audit_buffer.
+    C. Fallback Mode (Redis Unavailable):
 
-    Blacklist Sync:
-        - On startup: Load blacklist_mobiles table into Redis SET blacklist_mobiles.
-        - On Admin UI add: Insert to Postgres + SADD to Redis.
-        - On Admin UI remove: Delete from Postgres + SREM from Redis.
+        POST /onboarding/register:
+            - Return 503 "Service temporarily unavailable"
+            - Log to Postgres directly
+
+        POST /sms/receive:
+            - Queue to power_down_store with key_type="pending_sms"
+            - Return 202 "Accepted for later processing"
+
+        POST /pin-setup:
+            - Return 503 "Service temporarily unavailable"
+
+        GET /health:
+            - Return 503 with status="unhealthy"
+
+    D. Recovery Process (Redis Back Online):
+        1. /health detects Redis responding → trigger recovery
+        2. Restore state keys from power_down_store → Redis (with TTL)
+        3. Process pending_sms entries through normal validation pipeline
+        4. Delete processed rows from power_down_store
+        5. Log REDIS_RECOVERED to audit_buffer
+        6. Resume normal operation
+
+    E. Blacklist Sync:
+        - Postgres blacklist_mobiles is authoritative (survives Redis failure)
+        - On startup: Load blacklist_mobiles table → Redis SET
+        - On Admin UI add: Postgres INSERT + Redis SADD
+        - On Admin UI remove: Postgres DELETE + Redis SREM
+
+7.1 Startup Sequence
+
+    1. Connect to PostgreSQL (required, fail if unavailable)
+    2. Connect to Redis (with 3 retries, exponential backoff)
+    3. If Redis available:
+        a. Load active settings: settings_history → config:current
+        b. Load blacklist: blacklist_mobiles table → Redis SET
+        c. Check power_down_store for pending recovery
+        d. If recovery needed → execute Recovery Process (7.D)
+    4. If Redis unavailable:
+        a. Log error to Postgres
+        b. Start in fallback mode (Section 7.C)
+    5. Start background workers (Sync Worker, Audit Worker)
+    6. Start FastAPI server
+    7. Log SERVICE_STARTED to audit_buffer (or Postgres if fallback)
+
+7.2 Shutdown Sequence (Graceful)
+
+    1. Stop accepting new requests (health returns "shutting_down")
+    2. Wait for in-flight requests to complete (max 30s timeout)
+    3. Flush sync_queue: POST remaining items to sync_url (best effort)
+    4. Flush audit_buffer: Write remaining items to Postgres
+    5. Log SERVICE_STOPPED to Postgres (direct write)
+    6. Close Redis connection
+    7. Close Postgres connection pool
+    8. Exit process
 
 8. Mandatory Helper Scripts
 create_super_admin.py
