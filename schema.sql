@@ -1,237 +1,190 @@
 -- =====================================================
--- SMS Bridge Production_2 Schema
+-- SMS Bridge v2.2 Schema (Aligned with Tech Spec)
 -- =====================================================
 -- Redis-first architecture with 6 PostgreSQL tables
--- PostgreSQL used only for: audit, config, blacklist, power-down resilience
--- All validation executes in Redis
+-- PostgreSQL used only for: config, audit, backup, blacklist, power-down
+-- All validation executes in Redis (no PostgreSQL in hot path)
 
 -- =====================================================
--- 1. input_sms - Audit trail with check results
+-- 1. Configuration History (Append-Only)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS input_sms (
+-- Version-controlled settings with JSON payload
+-- Only one row can have is_active = TRUE at any time
+
+CREATE TABLE IF NOT EXISTS settings_history (
+    version_id SERIAL PRIMARY KEY,
+    payload JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by VARCHAR(50),
+    change_note TEXT
+);
+
+-- Ensure only one active config at a time
+CREATE UNIQUE INDEX IF NOT EXISTS idx_settings_active 
+    ON settings_history(is_active) WHERE is_active = TRUE;
+
+-- Default settings payload (v2.2 format)
+INSERT INTO settings_history (payload, is_active, created_by, change_note)
+VALUES (
+    '{
+      "sms_receiver_number": "+919000000000",
+      "allowed_prefix": "ONBOARD:",
+      "hash_length": 8,
+      "ttl_hash_seconds": 900,
+      "sync_interval": 1.0,
+      "log_interval": 120,
+      "count_threshold": 5,
+      "allowed_countries": ["+91", "+44"],
+      "sync_url": "https://your-backend.com/api/validated-users",
+      "recovery_url": "https://your-backend.com/api/recover",
+      "checks": {
+        "header_hash_check_enabled": true,
+        "foreign_number_check_enabled": true,
+        "count_check_enabled": true,
+        "blacklist_check_enabled": true
+      },
+      "secrets": {
+        "hmac_secret": "CHANGE_ME_IN_PRODUCTION",
+        "hash_key": "CHANGE_ME_IN_PRODUCTION"
+      }
+    }'::jsonb,
+    TRUE,
+    'system',
+    'Initial default settings (v2.2)'
+) ON CONFLICT DO NOTHING;
+
+-- =====================================================
+-- 2. Admin Users
+-- =====================================================
+-- SQLAdmin authentication with BCrypt password hashes
+
+CREATE TABLE IF NOT EXISTS admin_users (
     id SERIAL PRIMARY KEY,
-    redis_id INTEGER NOT NULL,
-    mobile_number VARCHAR(15) NOT NULL,
-    country_code VARCHAR(5),
-    local_mobile VARCHAR(15),
-    sms_message TEXT NOT NULL,
-    received_timestamp TIMESTAMPTZ NOT NULL,
-    device_id VARCHAR(100),
-    
-    -- Check result columns (1=pass, 2=fail, 3=skipped/disabled, 4=N/A)
-    mobile_check INTEGER DEFAULT 3,
-    duplicate_check INTEGER DEFAULT 3,
-    header_hash_check INTEGER DEFAULT 3,
-    count_check INTEGER DEFAULT 3,
-    foreign_number_check INTEGER DEFAULT 3,
-    blacklist_check INTEGER DEFAULT 3,
-    time_window_check INTEGER DEFAULT 3,
-    
-    validation_status VARCHAR(20) DEFAULT 'pending',
-    failed_at_check VARCHAR(30),
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    is_super_admin BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for input_sms
-CREATE INDEX IF NOT EXISTS idx_input_redis_id ON input_sms (redis_id);
-CREATE INDEX IF NOT EXISTS idx_input_mobile ON input_sms (mobile_number);
-CREATE INDEX IF NOT EXISTS idx_input_validation_status ON input_sms (validation_status);
-CREATE INDEX IF NOT EXISTS idx_input_received_timestamp ON input_sms (received_timestamp);
-CREATE INDEX IF NOT EXISTS idx_input_country_local ON input_sms (country_code, local_mobile);
+-- =====================================================
+-- 3. Logs (Append-Only)
+-- =====================================================
+-- Simple event logging with JSONB details
+-- Events: HASH_GEN, SMS_VERIFIED, PIN_COLLECTED, RECOVERY_TRIGGERED, etc.
 
--- =====================================================
--- 2. onboarding_mobile - Onboarding audit trail
--- =====================================================
-CREATE TABLE IF NOT EXISTS onboarding_mobile (
+CREATE TABLE IF NOT EXISTS sms_bridge_logs (
     id SERIAL PRIMARY KEY,
-    mobile_number VARCHAR(15) NOT NULL,
-    email VARCHAR(100),
-    device_id VARCHAR(100),
-    hash VARCHAR(64) NOT NULL,
-    salt VARCHAR(32) NOT NULL,
-    country_code VARCHAR(5),
-    local_mobile VARCHAR(15),
-    request_timestamp TIMESTAMPTZ DEFAULT NOW(),
-    user_deadline TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-    is_active BOOLEAN DEFAULT TRUE,
-    is_validated BOOLEAN DEFAULT FALSE,
-    sms_validated BOOLEAN DEFAULT FALSE,
-    validated_at TIMESTAMPTZ,
+    event VARCHAR(50) NOT NULL,
+    details JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for onboarding_mobile
-CREATE INDEX IF NOT EXISTS idx_onboard_mobile ON onboarding_mobile (mobile_number);
-CREATE INDEX IF NOT EXISTS idx_onboard_hash ON onboarding_mobile (hash);
-CREATE INDEX IF NOT EXISTS idx_onboard_request_timestamp ON onboarding_mobile (request_timestamp);
-CREATE INDEX IF NOT EXISTS idx_onboard_device ON onboarding_mobile (device_id);
-CREATE INDEX IF NOT EXISTS idx_onboard_active ON onboarding_mobile (is_active);
-CREATE INDEX IF NOT EXISTS idx_onboard_sms_validated ON onboarding_mobile (sms_validated);
+CREATE INDEX IF NOT EXISTS idx_logs_event ON sms_bridge_logs(event);
+CREATE INDEX IF NOT EXISTS idx_logs_created ON sms_bridge_logs(created_at);
 
 -- =====================================================
--- 3. blacklist_sms - Persistent blacklist
+-- 4. Backup Credentials (Hot Path Backup)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS blacklist_sms (
-    mobile_number VARCHAR(15) PRIMARY KEY,
-    country_code VARCHAR(5),
-    local_mobile VARCHAR(15),
-    blacklisted_at TIMESTAMPTZ DEFAULT NOW(),
-    reason VARCHAR(100) DEFAULT 'threshold_exceeded',
-    message_count INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+-- Stores validated {mobile, pin, hash} from audit_buffer
+-- Written by Audit Worker (every log_interval seconds)
+-- Does NOT block hot path (sync_queue → sync_url)
+
+CREATE TABLE IF NOT EXISTS backup_users (
+    id SERIAL PRIMARY KEY,
+    mobile VARCHAR(20) NOT NULL,
+    pin VARCHAR(10) NOT NULL,
+    hash VARCHAR(20) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    synced_at TIMESTAMPTZ
 );
 
--- Indexes for blacklist_sms
-CREATE INDEX IF NOT EXISTS idx_blacklist_country_local ON blacklist_sms (country_code, local_mobile);
-CREATE INDEX IF NOT EXISTS idx_blacklist_blacklisted_at ON blacklist_sms (blacklisted_at);
+CREATE INDEX IF NOT EXISTS idx_backup_mobile ON backup_users(mobile);
 
 -- =====================================================
--- 4. power_down_store - Redis failure backup
+-- 5. Power-Down Store (Redis Failure Backup)
 -- =====================================================
+-- Stores Redis keys when Redis connection fails
+-- Restored to Redis when connection recovers
+
 CREATE TABLE IF NOT EXISTS power_down_store (
     id SERIAL PRIMARY KEY,
-    mobile_number VARCHAR(15) NOT NULL,
-    sms_message TEXT NOT NULL,
-    received_timestamp TIMESTAMPTZ NOT NULL,
-    device_id VARCHAR(100),
-    stored_at TIMESTAMPTZ DEFAULT NOW(),
-    processed BOOLEAN DEFAULT FALSE,
-    processed_at TIMESTAMPTZ
+    key_name VARCHAR(255) NOT NULL,
+    key_type VARCHAR(20) NOT NULL,  -- "hash", "string", "set", "list"
+    value JSONB NOT NULL,
+    original_ttl INTEGER,           -- Remaining TTL in seconds (NULL if no TTL)
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes for power_down_store
-CREATE INDEX IF NOT EXISTS idx_powerdown_processed ON power_down_store (processed);
-CREATE INDEX IF NOT EXISTS idx_powerdown_stored_at ON power_down_store (stored_at);
+CREATE INDEX IF NOT EXISTS idx_powerdown_key ON power_down_store(key_name);
 
 -- =====================================================
--- 5. power_down_store_counters - Counter persistence
+-- 6. Blacklist (Persistent)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS power_down_store_counters (
-    counter_name VARCHAR(50) PRIMARY KEY,
-    counter_value BIGINT NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+-- Loaded into Redis SET blacklist_mobiles on startup
+-- Synced to Redis on Admin UI add/remove operations
+
+CREATE TABLE IF NOT EXISTS blacklist_mobiles (
+    id SERIAL PRIMARY KEY,
+    mobile VARCHAR(20) UNIQUE NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by VARCHAR(50)
 );
 
--- Initialize counters
-INSERT INTO power_down_store_counters (counter_name, counter_value) 
-VALUES 
-    ('queue_input_sms', 0),
-    ('queue_onboarding', 0)
-ON CONFLICT (counter_name) DO NOTHING;
+CREATE INDEX IF NOT EXISTS idx_blacklist_mobile ON blacklist_mobiles(mobile);
 
 -- =====================================================
--- 6. sms_settings - UI-configurable settings
+-- ARCHITECTURE NOTES (v2.2)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS sms_settings (
-    setting_key VARCHAR(100) PRIMARY KEY,
-    setting_value TEXT NOT NULL,
-    setting_type VARCHAR(20) DEFAULT 'string',
-    category VARCHAR(50) DEFAULT 'general',
-    description TEXT,
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Insert default settings
-INSERT INTO sms_settings (setting_key, setting_value, setting_type, category, description) 
-VALUES 
-    -- General Settings
-    ('onboarding_ttl_seconds', '86400', 'integer', 'general', 'Redis TTL for onboarding entries (24 hours)'),
-    ('user_timelimit_seconds', '300', 'integer', 'general', 'User deadline for SMS submission (5 minutes)'),
-    ('hash_salt_length', '16', 'integer', 'general', 'Salt length for hash generation'),
-    
-    -- Sync Settings
-    ('hetzner_sync_interval_seconds', '10', 'integer', 'sync', 'Hetzner Supabase sync frequency (validated only)'),
-    ('local_sync_interval_seconds', '120', 'integer', 'sync', 'Local PostgreSQL dump frequency (all data)'),
-    ('blacklist_check_interval_seconds', '300', 'integer', 'sync', 'Blacklist reload from PostgreSQL frequency'),
-    
-    -- Validation Check Toggles
-    ('mobile_check_enabled', 'true', 'boolean', 'validation', 'Enable mobile format validation'),
-    ('duplicate_check_enabled', 'true', 'boolean', 'validation', 'Enable duplicate detection'),
-    ('header_hash_check_enabled', 'true', 'boolean', 'validation', 'Enable header and hash validation'),
-    ('count_check_enabled', 'true', 'boolean', 'validation', 'Enable SMS count threshold check'),
-    ('foreign_number_check_enabled', 'true', 'boolean', 'validation', 'Enable foreign country code check'),
-    ('blacklist_check_enabled', 'true', 'boolean', 'validation', 'Enable blacklist check'),
-    ('time_window_check_enabled', 'true', 'boolean', 'validation', 'Enable time window validation'),
-    
-    -- Validation Thresholds
-    ('count_check_threshold', '5', 'integer', 'thresholds', 'Max SMS per mobile in 24h before rejection'),
-    ('blacklist_threshold', '10', 'integer', 'thresholds', 'Count to trigger permanent blacklist'),
-    
-    -- Country Codes
-    ('allowed_country_codes', '["91", "1", "44", "61", "33", "49"]', 'json', 'validation', 'Allowed country codes for foreign number check'),
-    
-    -- Redis Connection
-    ('redis_host', 'localhost', 'string', 'infrastructure', 'Redis server host'),
-    ('redis_port', '6379', 'integer', 'infrastructure', 'Redis server port'),
-    
-    -- PostgreSQL Connection
-    ('pgbouncer_pool_size', '10', 'integer', 'infrastructure', 'PgBouncer connection pool size'),
-    
-    -- Monitoring
-    ('log_level', 'INFO', 'string', 'monitoring', 'Application log level (DEBUG, INFO, WARNING, ERROR)'),
-    ('maintenance_mode', 'false', 'boolean', 'monitoring', 'Enable maintenance mode (reject new requests)'),
-    
-    -- Batch Processor Settings
-    ('batch_size', '100', 'integer', 'batch', 'Number of SMS to process per batch'),
-    ('batch_timeout', '2.0', 'string', 'batch', 'Timeout in seconds to wait for batch to fill'),
-    ('last_processed_id', '0', 'integer', 'batch', 'Last processed ID for batch processor'),
-    
-    -- Additional Validation Settings
-    ('permitted_headers', 'ONBOARD,VERIFY,AUTH', 'string', 'validation', 'Comma-separated list of permitted SMS headers'),
-    ('validation_time_window', '300', 'integer', 'validation', 'Time window in seconds for SMS validation'),
-    ('foreign_number_validation', 'true', 'boolean', 'validation', 'Enable foreign number validation'),
-    
-    -- Check Sequence and Enable Flags (JSON)
-    ('check_sequence', '["mobile", "duplicate", "header_hash", "count", "foreign_number", "blacklist", "time_window"]', 'json', 'validation', 'Order of validation checks'),
-    ('check_enabled', '{"mobile": true, "duplicate": true, "header_hash": true, "count": true, "foreign_number": true, "blacklist": true, "time_window": true}', 'json', 'validation', 'Enable flags for each check')
-ON CONFLICT (setting_key) DO NOTHING;
-
--- =====================================================
--- DROP obsolete tables from old schema
--- =====================================================
--- These are commented out for safety - uncomment to execute
--- DROP TABLE IF EXISTS out_sms CASCADE;
--- DROP TABLE IF EXISTS sms_monitor CASCADE;
--- DROP TABLE IF EXISTS count_sms CASCADE;
--- DROP TABLE IF EXISTS system_settings CASCADE;
-
--- =====================================================
--- Comments for Production_2 Architecture
--- =====================================================
--- REDIS-FIRST DESIGN:
--- - All validation checks execute in Redis (no PostgreSQL in hot path)
--- - PostgreSQL used only for audit trail, configuration, and resilience
+-- 
+-- HOT PATH (Redis only, no SQL):
+--   /onboarding/register → active_onboarding:{hash} in Redis
+--   /sms/receive → 4 validation checks (all Redis)
+--   /pin-setup → sync_queue (Redis List)
+--   Sync Worker (every sync_interval) → POST to sync_url
+-- 
+-- COLD PATH (Async, Non-Blocking):
+--   Events → audit_buffer (Redis List)
+--   Audit Worker (every log_interval) → sms_bridge_logs + backup_users
 -- 
 -- REDIS DATA STRUCTURES:
--- - queue_onboarding:{mobile} - HASH with onboarding data
--- - onboard_hash:{mobile} - STRING for quick lookup
--- - queue_input_sms:{id} - HASH with SMS + check results
--- - Queue_validated_mobiles - SET for duplicate check (format: {mobile}:{device_id})
--- - sms_count:{mobile} - INT counter with 24h TTL
--- - blacklist_mobiles - SET cached from PostgreSQL
--- - counter:queue_input_sms - Auto-incrementing ID
--- - counter:queue_onboarding - Auto-incrementing ID
--- - setting:{key} - Cached settings with 60s TTL
+--   sync_queue              - List: {mobile, pin, hash} for backend sync
+--   retry_queue             - List: Failed sync payloads
+--   audit_buffer            - List: {event, details} for Postgres
+--   active_onboarding:{hash} - Hash: {mobile, expires_at} with TTL
+--   verified:{mobile}       - String: hash value (TTL 15m)
+--   limit:sms:{mobile}      - String: rate limit counter (TTL 1h)
+--   config:current          - String: cached JSON settings
+--   blacklist_mobiles       - Set: blocked mobile numbers
 -- 
--- DUAL TIME WINDOWS:
--- - user_timelimit_seconds (X): 5 minutes - user-facing deadline
--- - onboarding_ttl_seconds (TTL): 24 hours - system audit retention
+-- VALIDATION CHECKS (4 checks, configurable via settings):
+--   1. header_hash_check    - Prefix + hash lookup (if enabled)
+--   2. foreign_number_check - Country code validation (if enabled)
+--   3. count_check          - Rate limiting (if enabled)
+--   4. blacklist_check      - Blocked numbers (if enabled)
 -- 
--- DUAL SYNC STRATEGY:
--- - Hetzner: Every 10s, validated mobiles ONLY
--- - Local PostgreSQL: Every 120s, ALL data (audit trail)
+-- CHECK STATUS CODES:
+--   1 = Pass
+--   2 = Fail
+--   3 = Disabled (skipped)
 -- 
--- SEQUENTIAL CHECKS (Redis-only):
--- 1. mobile_check - E.164 validation
--- 2. duplicate_check - Queue_validated_mobiles SET
--- 3. header_hash_check - "ONBOARD:" prefix + hash match
--- 4. count_check - sms_count:{mobile} counter
--- 5. foreign_number_check - Country code validation
--- 6. blacklist_check - blacklist_mobiles SET
--- 7. time_window_check - Within user_deadline
+-- POWER-DOWN RESILIENCE:
+--   Redis failure → Dump active keys to power_down_store
+--   Redis recovery → Restore from power_down_store
+--   Blacklist: Postgres ↔ Redis sync on startup and admin changes
 -- 
--- POWER DOWN RESILIENCE:
--- - Redis down: Incoming SMS → power_down_store table
--- - Redis recovery: Restore counters from power_down_store_counters
--- - Background sync: Queue_input_sms → input_sms (periodic)
+-- SETTINGS (JSON payload in settings_history):
+--   sms_receiver_number    - Number user sends SMS to
+--   allowed_prefix         - Expected message prefix ("ONBOARD:")
+--   hash_length            - Generated hash length (default: 8)
+--   ttl_hash_seconds       - Redis TTL for active_onboarding (default: 900)
+--   sync_interval          - Sync worker frequency in seconds (default: 1.0)
+--   log_interval           - Audit worker frequency in seconds (default: 120)
+--   count_threshold        - Max SMS per mobile before rejection
+--   allowed_countries      - Array of allowed country prefixes
+--   sync_url               - Backend endpoint for validated data
+--   recovery_url           - Backend endpoint for recovery trigger
+--   checks.*_enabled       - Enable/disable individual checks
+--   secrets.hmac_secret    - HMAC key for hash generation and signing
+--   secrets.hash_key       - Additional key for hash generation

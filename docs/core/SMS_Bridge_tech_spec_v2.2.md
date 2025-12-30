@@ -48,6 +48,12 @@ B. Tab 1: Settings History (Version Control)
       "allowed_countries": ["+91", "+44"],
       "sync_url": "https://your-backend.com/api/validated-users",
       "recovery_url": "https://your-backend.com/api/recover",
+      "checks": {
+        "header_hash_check_enabled": true,
+        "foreign_number_check_enabled": true,
+        "count_check_enabled": true,
+        "blacklist_check_enabled": true
+      },
       "secrets": { "hmac_secret": "...", "hash_key": "..." }
     }
 
@@ -63,19 +69,23 @@ C. Tab 2: Test Lab (Simulation GUI)
 
         Action: A "Simulate Webhook" button.
 
-        Logic: This button sends an internal POST request to /sms-webhook or invokes the service function directly.
+        Logic: This button sends an internal POST request to /sms/receive or invokes the service function directly.
 
         Result Display: Shows the JSON response (Success/Fail) and the Log output (e.g., "PREFIX_MISMATCH", "SMS_VERIFIED").
 
 3. Redis Data Structures (Standard Redis)
-Key Name	Type	Purpose	TTL
-sync_queue	List	HOT: Payload {mobile, pin, hash} for Supabase.	N/A
-retry_queue	List	RECOVERY: Payloads that failed to sync.	N/A
-audit_buffer	List	COLD: Logs {event, details} for Postgres.	N/A
-active_onboarding:[hash]	Hash	Maps hash → {mobile, expires_at}.	900s
-verified:[mobile]	String	Flag set after SMS match. Value=hash.	15m
-limit:sms:[mobile]	String	Rate limit counter.	1h
-config:current	String	Cached JSON settings from Postgres.	N/A
+
+| Key Name | Type | Purpose | TTL |
+|----------|------|---------|-----|
+| sync_queue | List | HOT: Payload {mobile, pin, hash} for backend | N/A |
+| retry_queue | List | RECOVERY: Payloads that failed to sync | N/A |
+| audit_buffer | List | COLD: Logs {event, details} for Postgres | N/A |
+| active_onboarding:{hash} | Hash | Maps hash → {mobile, expires_at} | From ttl_hash_seconds |
+| verified:{mobile} | String | Flag after SMS match. Value=hash | 15m |
+| limit:sms:{mobile} | String | Rate limit counter | 1h |
+| config:current | String | Cached JSON settings from Postgres | N/A |
+| blacklist_mobiles | Set | Blacklisted mobile numbers | N/A |
+
 4. API Specification
 4.1 POST /onboarding/register (Backend Call)
 
@@ -137,26 +147,30 @@ config:current	String	Cached JSON settings from Postgres.	N/A
 
     Logic (Sequential Validation Pipeline):
 
-        1. Header Hash Check:
+        1. Header Hash Check (if checks.header_hash_check_enabled):
             - Validate message length matches expected (prefix + hash_length)
             - Validate message starts with allowed_prefix ("ONBOARD:")
             - Extract hash from message
             - Lookup: EXISTS active_onboarding:{hash}
             - If not found (expired or invalid) → FAIL
+            - If disabled → status code 3, continue
 
-        2. Foreign Number Check:
+        2. Foreign Number Check (if checks.foreign_number_check_enabled):
             - Extract country code from sender mobile
             - Validate: country_code in allowed_countries
             - If not in list → FAIL
+            - If disabled → status code 3, continue
 
-        3. Count Check:
+        3. Count Check (if checks.count_check_enabled):
             - INCR limit:sms:{mobile}
             - Check: count <= count_threshold
             - If exceeded → FAIL
+            - If disabled → status code 3, continue
 
-        4. Blacklist Check:
+        4. Blacklist Check (if checks.blacklist_check_enabled):
             - Check: SISMEMBER blacklist_mobiles {mobile}
             - If blacklisted → FAIL
+            - If disabled → status code 3, continue
 
         On All Pass:
             - DELETE active_onboarding:{hash}
@@ -167,7 +181,10 @@ config:current	String	Cached JSON settings from Postgres.	N/A
           on successful validation. Subsequent SMS with same hash will fail at
           header_hash_check (hash not found).
 
-    Check Status Codes: 1=pass, 2=fail, 3=disabled
+    Check Status Codes:
+        - 1 = Pass
+        - 2 = Fail
+        - 3 = Disabled (skipped)
 
     Request Body:
         {
@@ -285,7 +302,7 @@ Audit Worker (Every log_interval seconds)
 6. Postgres Schema
 SQL
 
--- 1. Configuration History
+-- 1. Configuration History (Append-Only)
 CREATE TABLE settings_history (
     version_id SERIAL PRIMARY KEY,
     payload JSONB NOT NULL,
@@ -300,14 +317,81 @@ CREATE TABLE admin_users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    is_super_admin BOOLEAN DEFAULT TRUE
+    is_super_admin BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
--- 3. Logs & Backup
-CREATE TABLE sms_bridge_logs ( ... ); -- Generic JSON logs
-CREATE TABLE backup_users ( ... );    -- Plaintext credentials vault
+-- 3. Logs (Append-Only)
+CREATE TABLE sms_bridge_logs (
+    id SERIAL PRIMARY KEY,
+    event VARCHAR(50) NOT NULL,
+    details JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
 
-7. Mandatory Helper Scripts
+-- 4. Backup Credentials (Hot Path Backup)
+CREATE TABLE backup_users (
+    id SERIAL PRIMARY KEY,
+    mobile VARCHAR(20) NOT NULL,
+    pin VARCHAR(10) NOT NULL,
+    hash VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    synced_at TIMESTAMP
+);
+
+-- 5. Power-Down Store (Redis Failure Backup)
+CREATE TABLE power_down_store (
+    id SERIAL PRIMARY KEY,
+    key_name VARCHAR(255) NOT NULL,
+    key_type VARCHAR(20) NOT NULL,
+    value JSONB NOT NULL,
+    original_ttl INTEGER,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 6. Blacklist (Persistent)
+CREATE TABLE blacklist_mobiles (
+    id SERIAL PRIMARY KEY,
+    mobile VARCHAR(20) UNIQUE NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    created_by VARCHAR(50)
+);
+
+-- Indexes for fast lookups
+CREATE INDEX idx_settings_active ON settings_history(is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_logs_event ON sms_bridge_logs(event);
+CREATE INDEX idx_logs_created ON sms_bridge_logs(created_at);
+CREATE INDEX idx_backup_mobile ON backup_users(mobile);
+CREATE INDEX idx_powerdown_key ON power_down_store(key_name);
+
+7. Power-Down Resilience
+
+    Trigger: Redis connection failure detected by health check or API call.
+
+    Dump Process:
+        1. Read all active Redis keys matching patterns:
+           - active_onboarding:*
+           - verified:*
+           - limit:sms:*
+        2. Insert each key into power_down_store with:
+           - key_name: Full Redis key
+           - key_type: "hash", "string", "set"
+           - value: JSON representation of data
+           - original_ttl: Remaining TTL (if any)
+
+    Recovery Process:
+        1. On Redis reconnection, read power_down_store.
+        2. Restore each key to Redis with appropriate TTL.
+        3. Delete restored rows from power_down_store.
+        4. Log REDIS_RECOVERED to audit_buffer.
+
+    Blacklist Sync:
+        - On startup: Load blacklist_mobiles table into Redis SET blacklist_mobiles.
+        - On Admin UI add: Insert to Postgres + SADD to Redis.
+        - On Admin UI remove: Delete from Postgres + SREM from Redis.
+
+8. Mandatory Helper Scripts
 create_super_admin.py
 
 You must provide this script to bootstrap the system securely.
