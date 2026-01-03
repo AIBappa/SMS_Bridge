@@ -99,9 +99,6 @@ services:
     volumes:
       - ./logs:/app/logs:rw
     environment:
-      # Backend Integration
-      CF_API_KEY: ${CF_API_KEY}
-      CF_BACKEND_URL: ${CF_BACKEND_URL}
       # Database (via PgBouncer)
       POSTGRES_HOST: pgbouncer
       POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}

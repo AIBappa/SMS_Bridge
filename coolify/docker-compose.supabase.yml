@@ -15,9 +15,6 @@ services:
     volumes:
       - ./logs:/app/logs:rw
     environment:
-      # Backend Integration
-      CF_API_KEY: ${CF_API_KEY}
-      CF_BACKEND_URL: ${CF_BACKEND_URL}
       # Supabase PostgreSQL Connection
       POSTGRES_HOST: ${SUPABASE_DB_HOST:-supabase-db}
       POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}

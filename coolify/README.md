@@ -66,9 +66,6 @@ services:
     volumes:
       - ./logs:/app/logs:rw
     environment:
-      # Backend Integration
-      CF_API_KEY: ${CF_API_KEY}
-      CF_BACKEND_URL: ${CF_BACKEND_URL}
       # Supabase PostgreSQL Connection
       POSTGRES_HOST: ${SUPABASE_DB_HOST:-supabase-db}
       POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}
@@ -123,8 +120,6 @@ DRAGONFLY_PASSWORD=your_dragonfly_password  # Leave empty if no auth
 # ===========================================
 # SMS Receiver Application
 # ===========================================
-CF_API_KEY=your_backend_api_key
-CF_BACKEND_URL=https://your-backend.com/api
 HASH_SECRET_KEY=your_hmac_secret_key
 LOG_LEVEL=INFO
 SMS_RECEIVER_PORT=8080
@@ -168,8 +163,6 @@ docker run -d \
   -e REDIS_HOST=dragonfly \
   -e REDIS_PORT=6379 \
   -e REDIS_PASSWORD=your_redis_password \
-  -e CF_API_KEY=your_api_key \
-  -e CF_BACKEND_URL=https://your-backend.com/api \
   -e HASH_SECRET_KEY=your_secret \
   sms_receiver
 ```
@@ -223,8 +216,6 @@ git push origin main
    |----------|-------------|---------|
    | `POSTGRES_PASSWORD` | Database password | `secure_password_123` |
    | `REDIS_PASSWORD` | Redis password | `redis_secure_456` |
-   | `CF_API_KEY` | Backend API key | `your_api_key` |
-   | `CF_BACKEND_URL` | Backend URL | `https://your-backend.com/api` |
    | `HASH_SECRET_KEY` | HMAC secret | `your_hmac_secret` |
    | `GRAFANA_ADMIN_PASSWORD` | Grafana admin pass | `grafana_admin_123` |
 
