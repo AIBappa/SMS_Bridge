@@ -15,7 +15,6 @@ sys.path.insert(0, '/home/shantanu/Documents/Software/SMS_Laptop_Setup/sms_bridg
 
 from core.config import get_settings
 from core.database import init_db, get_db_context
-from core.admin import create_admin_user
 from core.models import SettingsHistory, AdminUser
 
 
@@ -73,15 +72,6 @@ def create_default_settings(created_by: str = "system"):
         print("✓ Default settings created")
 
 
-def create_initial_admin(username: str, password: str, email: str = None):
-    """Create initial admin user"""
-    success = create_admin_user(username, password, email)
-    if success:
-        print(f"✓ Admin user '{username}' created")
-    else:
-        print(f"! Admin user '{username}' already exists")
-
-
 def interactive_setup():
     """Interactive setup wizard"""
     print("\n=== SMS Bridge v2.2 Setup ===\n")
@@ -89,40 +79,24 @@ def interactive_setup():
     # Initialize database
     init_database()
     
-    # Create admin user
-    print("\nCreate admin user:")
-    username = input("  Username [admin]: ").strip() or "admin"
-    email = input("  Email (optional): ").strip() or None
-    password = getpass("  Password: ")
-    password_confirm = getpass("  Confirm password: ")
-    
-    if password != password_confirm:
-        print("! Passwords don't match")
-        sys.exit(1)
-    
-    if len(password) < 8:
-        print("! Password must be at least 8 characters")
-        sys.exit(1)
-    
-    create_initial_admin(username, password, email)
-    
     # Create default settings
-    create_default_settings(created_by=username)
+    print("\nCreating default settings...")
+    create_default_settings(created_by="system")
     
     print("\n✓ Setup complete!")
+    print(f"\n⚠️  IMPORTANT: Set admin credentials in .env:")
+    print(f"  SMS_BRIDGE_ADMIN_USERNAME=admin")
+    print(f"  SMS_BRIDGE_ADMIN_PASSWORD=YourSecurePassword123")
     print(f"\nStart the server with:")
     print(f"  cd /home/shantanu/Documents/Software/SMS_Laptop_Setup/sms_bridge")
     print(f"  python -m core.sms_server_v2")
     print(f"\nAdmin UI available at: http://localhost:8000/admin")
+    print(f"(Admin user will be auto-created on first startup from .env)")
 
 
 def main():
     parser = argparse.ArgumentParser(description="SMS Bridge Setup Script")
     parser.add_argument("--init-db", action="store_true", help="Initialize database only")
-    parser.add_argument("--create-admin", action="store_true", help="Create admin user")
-    parser.add_argument("--username", type=str, default="admin", help="Admin username")
-    parser.add_argument("--password", type=str, help="Admin password")
-    parser.add_argument("--email", type=str, help="Admin email")
     parser.add_argument("--create-settings", action="store_true", help="Create default settings")
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive setup")
     
@@ -134,12 +108,6 @@ def main():
     
     if args.init_db:
         init_database()
-    
-    if args.create_admin:
-        if not args.password:
-            print("Error: --password required with --create-admin")
-            sys.exit(1)
-        create_initial_admin(args.username, args.password, args.email)
     
     if args.create_settings:
         create_default_settings()

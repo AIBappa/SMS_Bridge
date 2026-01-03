@@ -253,53 +253,27 @@ def setup_admin(app: FastAPI) -> Admin:
 # Admin User Management
 # =============================================================================
 
-def create_admin_user(username: str, password: str, creation_secret: Optional[str] = None) -> bool:
+def create_admin_user(username: str, password: str) -> bool:
     """
-    Create a new admin user with security protections.
+    Create a new admin user (INTERNAL USE ONLY).
     
-    Security features:
-    1. Requires ADMIN_CREATION_SECRET from environment
-    2. Can be locked down after first admin is created
+    ⚠️  SECURITY: This function should ONLY be called by ensure_admin_from_env()
+    during application startup. It is NOT exported in __init__.py and should
+    never be exposed via CLI script or web endpoint.
     
     Args:
         username: Admin username
         password: Admin password (will be hashed)
-        creation_secret: Secret key for admin creation (from .env)
     
     Returns:
         bool: True if user created successfully, False otherwise
     """
     from core.database import get_db_context
-    from core.config import get_settings
-    
-    settings = get_settings()
-    
-    # SECURITY: Require admin creation secret
-    if not settings.admin_creation_secret:
-        logger.error(
-            "ADMIN_CREATION_SECRET not set in environment! "
-            "Set SMS_BRIDGE_ADMIN_CREATION_SECRET to create admin users."
-        )
-        return False
-    
-    if creation_secret != settings.admin_creation_secret:
-        logger.error("Invalid admin creation secret provided")
-        return False
     
     password_hash = pwd_context.hash(password)
     
     try:
         with get_db_context() as db:
-            # SECURITY: Check if admin creation is locked down
-            if settings.admin_creation_lockdown:
-                admin_count = db.query(AdminUser).count()
-                if admin_count > 0:
-                    logger.error(
-                        "Admin creation is locked down. "
-                        "First admin already exists. Disable SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN to create more admins."
-                    )
-                    return False
-            
             # Check if user exists
             existing = db.query(AdminUser).filter(
                 AdminUser.username == username
@@ -321,6 +295,38 @@ def create_admin_user(username: str, password: str, creation_secret: Optional[st
     except Exception as e:
         logger.error(f"Failed to create admin user: {e}")
         return False
+
+
+def ensure_admin_from_env() -> None:
+    """
+    Create admin user from environment variables if it doesn't exist.
+    Called during application startup.
+    """
+    from core.config import get_settings
+    
+    settings = get_settings()
+    
+    if not settings.admin_username or not settings.admin_password:
+        logger.info("Admin credentials not set in environment, skipping auto-creation")
+        return
+    
+    # Check if admin already exists
+    from core.database import get_db_context
+    with get_db_context() as db:
+        existing = db.query(AdminUser).filter(
+            AdminUser.username == settings.admin_username
+        ).first()
+        
+        if existing:
+            logger.info(f"Admin user '{settings.admin_username}' already exists")
+            return
+    
+    # Create admin from environment
+    success = create_admin_user(settings.admin_username, settings.admin_password)
+    if success:
+        logger.info(f"Auto-created admin user from environment: {settings.admin_username}")
+    else:
+        logger.error(f"Failed to auto-create admin user: {settings.admin_username}")
 
 
 def verify_admin_password(username: str, password: str) -> bool:

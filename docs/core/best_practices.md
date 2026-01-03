@@ -125,18 +125,31 @@ The Admin UI is accessible at `http://localhost:8000/admin` after deployment.
 
 #### Creating Initial Admin User
 
-After deploying the application, create the first admin user:
+Admin users are automatically created from environment variables on startup:
 
 ```bash
-# Using the init script (interactive mode)
+# In your .env file, set:
+SMS_BRIDGE_ADMIN_USERNAME=admin
+SMS_BRIDGE_ADMIN_PASSWORD=YourSecurePassword123
+
+# Then start/restart the application
+docker-compose up -d
+```
+
+The admin user will be created automatically on first startup if the credentials are set in `.env` and the user doesn't already exist.
+
+#### Initialize Database and Settings (Optional)
+
+If you need to manually initialize the database or create default settings:
+
+```bash
+# Interactive mode (recommended for first-time setup)
 cd /home/<user>/Documents/Software/SMS_Laptop_Setup/sms_bridge
 python scripts/init_sms_bridge.py -i
 
-# Or with command-line arguments
-python scripts/init_sms_bridge.py --create-admin --username admin --password <your-password> --email admin@example.com
-
-# Initialize database and create default settings
-python scripts/init_sms_bridge.py --init-db --create-settings
+# Or initialize components individually
+python scripts/init_sms_bridge.py --init-db           # Create database tables
+python scripts/init_sms_bridge.py --create-settings   # Create default settings
 ```
 
 #### Admin UI Features

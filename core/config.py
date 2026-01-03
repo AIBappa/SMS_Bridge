@@ -68,13 +68,13 @@ class AppSettings(BaseSettings):
     # Admin UI
     admin_enabled: bool = Field(default=True, description="Enable SQLAdmin UI")
     admin_path: str = Field(default="/admin", description="Admin UI path")
-    admin_creation_secret: str = Field(
+    admin_username: str = Field(
         default="",
-        description="Secret required to create admin users. MUST be set in production!"
+        description="Default admin username (auto-created on startup if not exists)"
     )
-    admin_creation_lockdown: bool = Field(
-        default=True,
-        description="Prevent admin creation after first admin exists"
+    admin_password: str = Field(
+        default="",
+        description="Default admin password (auto-created on startup if not exists)"
     )
     
     # Metrics

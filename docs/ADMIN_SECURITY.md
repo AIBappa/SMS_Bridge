@@ -2,135 +2,110 @@
 
 ## Overview
 
-The SMS Bridge Admin UI provides powerful management capabilities for your SMS verification system. This document outlines the security measures implemented to protect against unauthorized admin access.
+The SMS Bridge Admin UI provides powerful management capabilities for your SMS verification system. This document outlines the security measures to protect against unauthorized admin access.
 
-## Security Measures
+## Security Approach
 
-### 1. **Admin Creation Secret** 🔐
+Admin credentials are stored in your `.env` file and automatically create the admin user on first startup. This approach is secure because:
 
-A secret key (like a master password) is required to create any admin user. This prevents random internet users from creating admin accounts even if they can access your server.
-
-**Configuration:**
-- Environment variable: `SMS_BRIDGE_ADMIN_CREATION_SECRET`
-- Must be set before any admin can be created
-- Should be a strong, random string (recommended: 32+ characters)
-
-**Generate a secure secret:**
-```bash
-# Linux/macOS
-openssl rand -hex 32
-
-# Or use Python
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-**Add to your .env file:**
-```bash
-SMS_BRIDGE_ADMIN_CREATION_SECRET=your_generated_secret_here
-```
-
-### 2. **Admin Creation Lockdown** 🔒
-
-After the first admin user is created, admin creation is automatically **locked down** by default. This prevents attackers from creating additional admin accounts.
-
-**Configuration:**
-- Environment variable: `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN`
-- Default: `True` (recommended)
-- Set to `False` only if you need to create multiple admins
-
-### 3. **CLI-Only Admin Creation** 🖥️
-
-Admin users can **ONLY** be created via the command-line script on the server. There is **NO web endpoint** for admin creation, preventing:
-- Remote admin creation attacks
-- CSRF attacks on admin creation
-- Automated bot attacks
-
-### 4. **Password Hashing** 🛡️
-
-All admin passwords are hashed using **bcrypt** before storage. Raw passwords are never stored in the database.
+1. **`.env` file protection** - Already in `.gitignore`, never committed to version control
+2. **Coolify secret management** - Coolify stores environment variables securely
+3. **Server access required** - Only users with SSH/server access can modify `.env`
+4. **HTTPS protection** - Use Cloudflare Tunnel or reverse proxy for encrypted access
 
 ## Creating Your First Admin
 
-### Step 1: Set the Admin Creation Secret
+### Step 1: Set Admin Credentials in .env
 
-Add to your `.env` file or Docker environment:
-
-```bash
-SMS_BRIDGE_ADMIN_CREATION_SECRET=your_very_secure_secret_key_here
-SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=True
-```
-
-### Step 2: Run the Admin Creation Script
-
-**From your server (SSH or local):**
+Add to your `.env` file or Coolify environment variables:
 
 ```bash
-# Method 1: Pass secret as argument
-python3 scripts/create_admin.py admin YourStrongPassword123 your_secret_key
-
-# Method 2: Interactive mode (secret not visible in command history)
-python3 scripts/create_admin.py admin YourStrongPassword123
-# You'll be prompted for the secret
+SMS_BRIDGE_ADMIN_USERNAME=admin
+SMS_BRIDGE_ADMIN_PASSWORD=YourVeryStrongPassword123!
 ```
 
-**Using Docker:**
-
+**Generate a strong password:**
 ```bash
-docker exec -it sms_receiver python3 scripts/create_admin.py admin YourStrongPassword123
-# You'll be prompted for the secret
+# Linux/macOS - random 20 character password
+openssl rand -base64 20
+
+# Or use Python
+python3 -c "import secrets, string; chars = string.ascii_letters + string.digits + string.punctuation; print(''.join(secrets.choice(chars) for _ in range(20)))"
 ```
 
-### Step 3: Secure the Secret
+### Step 2: Deploy/Restart Application
 
-**IMPORTANT:** After creating your first admin:
+The admin user is **automatically created** on startup if:
+- `SMS_BRIDGE_ADMIN_USERNAME` is set
+- `SMS_BRIDGE_ADMIN_PASSWORD` is set  
+- User doesn't already exist
 
-1. **Remove the secret from the server** (optional but recommended):
-   ```bash
-   # Edit your .env and remove or comment out the line:
-   # SMS_BRIDGE_ADMIN_CREATION_SECRET=...
-   ```
+**Using Docker Compose:**
+```bash
+docker-compose restart sms_receiver
+```
 
-2. **Store the secret securely offline** (in case you need to create more admins later)
+**Using Coolify:**
+Just redeploy the service - Coolify will restart with new environment variables.
 
-3. **Restart your application** to reload environment variables
+### Step 3: Login
+
+Access the admin UI at: `https://your-domain/admin/`
+
+- Username: (value from `SMS_BRIDGE_ADMIN_USERNAME`)
+- Password: (value from `SMS_BRIDGE_ADMIN_PASSWORD`)
+
+That's it! No separate script needed.
 
 ## Creating Additional Admins
 
-If you need to create more admin users after lockdown:
+**Security Note:** For maximum security, there is no script or programmatic way to create admin users. All admin creation happens via environment variables on startup.
 
-### Temporary Lockdown Disable
+### To Add More Admins:
 
-1. Set `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=False` in your `.env`
-2. Restart the application
-3. Run the admin creation script with the secret
-4. Set `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=True` again
-5. Restart the application
+1. **Using Admin UI** (Recommended when available)
+   - Future versions will support creating additional admins through the UI
+   - Requires being logged in as an existing admin
 
-### Alternative: Create from Admin UI
+2. **Via Database Direct Access** (Advanced users only)
+   ```bash
+   # Generate password hash
+   python3 -c "from passlib.context import CryptContext; print(CryptContext(schemes=['bcrypt']).hash('NewPassword123'))"
+   
+   # Insert into database (replace <username> and <hash>)
+   docker exec -it sms_postgres psql -U postgres -d sms_bridge -c \
+     "INSERT INTO admin_users (username, password_hash, created_at) VALUES ('<username>', '<hash>', NOW());"
+   ```
 
-Once logged in as an admin, you can create additional admins through the Admin UI without needing the creation secret (coming soon in future versions).
+3. **Deploy Separate Instance** (For multi-admin scenarios)
+   - Add additional admin credentials to `.env`:
+     ```bash
+     SMS_BRIDGE_ADMIN_USERNAME=newadmin
+     SMS_BRIDGE_ADMIN_PASSWORD=SecurePass456
+     ```
+   - Restart application
+   - New admin auto-created if username doesn't exist yet
 
 ## Security Best Practices
 
 ### ✅ DO
 
-- **Generate a strong, random secret** (32+ characters)
-- **Store the secret in a password manager** after removing from server
-- **Use strong admin passwords** (12+ characters, mixed case, numbers, symbols)
-- **Enable admin creation lockdown** (`SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=True`)
-- **Remove the secret from .env** after creating first admin
+- **Use strong admin passwords** (16+ characters, mixed case, numbers, symbols)
+- **Generate passwords with a tool** (use `openssl rand -base64 20`)
+- **Never commit .env to Git** (already in `.gitignore`)
 - **Use HTTPS** for the admin UI (via Cloudflare Tunnel or reverse proxy)
 - **Limit SSH access** to your server
 - **Enable 2FA** on your hosting account (Hetzner, etc.)
+- **Rotate passwords regularly** (change in .env and restart)
+- **Use unique credentials** for each deployment
 
 ### ❌ DON'T
 
-- **Don't commit the secret to Git** (use `.env` which is in `.gitignore`)
-- **Don't use weak secrets** like "password123" or "admin"
-- **Don't share the secret** via unsecured channels (email, chat)
-- **Don't expose the admin UI** without HTTPS
-- **Don't use the same secret** for multiple deployments
-- **Don't leave the secret in .env** long-term (remove after first admin creation)
+- **Don't use weak passwords** like "password123" or "admin"  
+- **Don't share credentials** via unsecured channels (email, chat)
+- **Don't expose admin UI** without HTTPS
+- **Don't reuse passwords** across multiple services
+- **Don't leave default credentials** (always change from example values)
 
 ## Cloudflare Tunnel Security
 
@@ -191,46 +166,47 @@ docker logs sms_receiver | grep "Admin login"
 
 ## Troubleshooting
 
-### "ADMIN_CREATION_SECRET not set in environment"
+### Admin user not created on startup
 
-**Problem:** The environment variable is missing or not loaded.
-
-**Solution:**
-1. Add `SMS_BRIDGE_ADMIN_CREATION_SECRET=...` to your `.env` file
-2. Restart the application to reload environment variables
-
-### "Invalid admin creation secret provided"
-
-**Problem:** The secret you provided doesn't match the one in `.env`.
+**Problem:** Logged in but admin user doesn't exist.
 
 **Solution:**
-1. Double-check the secret in your `.env` file
-2. Make sure there are no extra spaces or quotes
-3. Restart application after changing `.env`
+1. Check logs: `docker logs sms_receiver | grep -i admin`
+2. Verify environment variables are set:
+   ```bash
+   docker exec sms_receiver printenv | grep SMS_BRIDGE_ADMIN
+   ```
+3. Ensure both USERNAME and PASSWORD are set (not empty)
+4. Restart application: `docker-compose restart sms_receiver`
 
-### "Admin creation is locked down"
+### Can't login with credentials from .env
 
-**Problem:** Lockdown is enabled and first admin already exists.
-
-**Solution:**
-1. Set `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=False` in `.env`
-2. Restart application
-3. Create new admin
-4. Set `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=True` again
-5. Restart application
-
-### "Admin user already exists"
-
-**Problem:** Username is taken.
+**Problem:** Credentials don't work at login page.
 
 **Solution:**
-Use a different username or delete the existing user from the database.
+1. Check if user was actually created:
+   ```bash
+   docker exec -it sms_postgres psql -U postgres -d sms_bridge -c "SELECT username, created_at FROM admin_users;"
+   ```
+2. If user exists, password might be wrong - see Emergency Access Recovery below
+3. If user doesn't exist, check startup logs for errors
 
 ## Emergency Access Recovery
 
 If you lose admin credentials:
 
-### Option 1: Reset Password via Database
+### Option 1: Update .env and Restart
+
+```bash
+# Update credentials in .env
+SMS_BRIDGE_ADMIN_USERNAME=admin  # existing username
+SMS_BRIDGE_ADMIN_PASSWORD=NewPassword123  # new password
+
+# Restart to trigger re-creation (will skip if user exists)
+# Instead, manually update password hash:
+```
+
+### Option 2: Reset Password via Database
 
 ```bash
 # Generate new password hash
@@ -241,13 +217,20 @@ docker exec -it sms_postgres psql -U postgres -d sms_bridge -c \
   "UPDATE admin_users SET password_hash='<hash>' WHERE username='<username>';"
 ```
 
-### Option 2: Create New Admin
+### Option 3: Delete and Recreate
 
-If you have the `ADMIN_CREATION_SECRET` backed up:
+```bash
+# Delete existing admin
+docker exec -it sms_postgres psql -U postgres -d sms_bridge -c \
+  "DELETE FROM admin_users WHERE username='admin';"
 
-1. Temporarily disable lockdown
-2. Create new admin with the script
-3. Re-enable lockdown
+# Set credentials in .env
+SMS_BRIDGE_ADMIN_USERNAME=admin
+SMS_BRIDGE_ADMIN_PASSWORD=NewSecurePassword123
+
+# Restart application
+docker-compose restart sms_receiver
+```
 
 ## Questions?
 

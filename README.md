@@ -60,7 +60,7 @@ docker-compose -f coolify/docker-compose.yml up -d
    cd coolify
    cp .env.example .env
    # Edit .env with your settings
-   # IMPORTANT: Set SMS_BRIDGE_ADMIN_CREATION_SECRET (generate with: openssl rand -hex 32)
+   # IMPORTANT: Set SMS_BRIDGE_ADMIN_USERNAME and SMS_BRIDGE_ADMIN_PASSWORD
    ```
 
 2. **Deploy with Docker Compose**:
@@ -68,19 +68,15 @@ docker-compose -f coolify/docker-compose.yml up -d
    cd coolify
    docker-compose up -d
    ```
-
-3. **Create first admin user** (required for Admin UI access):
-   ```bash
-   python3 scripts/create_admin.py admin YourStrongPassword123
-   # You'll be prompted for the admin creation secret from .env
-   ```
    
-   See [Admin Security Guide](docs/ADMIN_SECURITY.md) for detailed security information.
+   Admin user will be **auto-created** on first startup from .env credentials.
 
-4. **Verify**: Check that services are running
+3. **Verify**: Check that services are running
    ```bash
    docker-compose ps
    ```
+   
+   Login to Admin UI at: http://localhost:8080/admin/
 
 ## Service Access
 

@@ -116,7 +116,11 @@ async def startup_event():
         redis_client.load_blacklist_from_db(mobiles)
         logger.info(f"Loaded {len(mobiles)} blacklisted numbers")
     
-    # 6. Setup Admin UI (if enabled)
+    # 6. Auto-create admin user from environment (if configured)
+    from core.admin.admin import ensure_admin_from_env
+    ensure_admin_from_env()
+    
+    # 7. Setup Admin UI (if enabled)
     if settings.admin_enabled:
         setup_admin(app)
         logger.info(f"Admin UI mounted at {settings.admin_path}")

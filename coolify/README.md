@@ -123,6 +123,10 @@ DRAGONFLY_PASSWORD=your_dragonfly_password  # Leave empty if no auth
 HASH_SECRET_KEY=your_hmac_secret_key
 LOG_LEVEL=INFO
 SMS_RECEIVER_PORT=8080
+
+# Admin UI Credentials (auto-created on startup)
+SMS_BRIDGE_ADMIN_USERNAME=admin
+SMS_BRIDGE_ADMIN_PASSWORD=YourSecurePassword123
 ```
 
 ### Step 4: Find Your Docker Network
@@ -217,7 +221,8 @@ git push origin main
    | `POSTGRES_PASSWORD` | Database password | `secure_password_123` |
    | `REDIS_PASSWORD` | Redis password | `redis_secure_456` |
    | `HASH_SECRET_KEY` | HMAC secret | `your_hmac_secret` |
-   | `SMS_BRIDGE_ADMIN_CREATION_SECRET` | **CRITICAL** Admin creation secret | Generate with `openssl rand -hex 32` |
+   | `SMS_BRIDGE_ADMIN_USERNAME` | Admin username (auto-created) | `admin` |
+   | `SMS_BRIDGE_ADMIN_PASSWORD` | Admin password (auto-created) | Generate with `openssl rand -base64 20` |
    | `GRAFANA_ADMIN_PASSWORD` | Grafana admin pass | `grafana_admin_123` |
 
 ### 3. Deploy
@@ -228,18 +233,16 @@ Click **Deploy** in Coolify. The following will happen automatically:
 - Initialize the database with schema
 - Start all services with health checks
 - Configure monitoring stack
+- **Auto-create admin user** from SMS_BRIDGE_ADMIN_USERNAME/PASSWORD
 
-### 4. Create Admin User (Required)
+### 4. Login to Admin UI
 
-After deployment, create your first admin user to access the Admin UI:
+Access the admin UI at: `https://your-domain/admin/`
 
-```bash
-# SSH into your server, then run:
-docker exec -it sms_receiver python3 scripts/create_admin.py admin YourStrongPassword123
-# You'll be prompted for the SMS_BRIDGE_ADMIN_CREATION_SECRET
-```
+- Username: (from `SMS_BRIDGE_ADMIN_USERNAME`)
+- Password: (from `SMS_BRIDGE_ADMIN_PASSWORD`)
 
-**🔒 Security Note:** See [Admin Security Guide](../docs/ADMIN_SECURITY.md) for important security information.
+**🔒 Security Note:** See [Admin Security Guide](../docs/ADMIN_SECURITY.md) for important security practices.
 
 ### 5. Configure Domain (Optional)
 
