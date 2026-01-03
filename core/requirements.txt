@@ -19,6 +19,7 @@ itsdangerous>=2.1  # Required for SQLAdmin sessions
 
 # Authentication
 passlib[bcrypt]>=1.7
+bcrypt<4.1.0  # Pin to avoid passlib compatibility issues with bcrypt 4.1.0+
 
 # HTTP Client (outbound sync_url calls)
 httpx>=0.25

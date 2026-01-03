@@ -29,6 +29,17 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def _truncate_password_for_bcrypt(password: str) -> str:
+    """
+    Truncate password to 72 bytes for bcrypt compatibility.
+    Bcrypt has a 72-byte limit - this truncates by bytes (not characters).
+    """
+    password_bytes = password.encode('utf-8')
+    if len(password_bytes) > 72:
+        return password_bytes[:72].decode('utf-8', errors='ignore')
+    return password
+
+
 class AdminAuth(AuthenticationBackend):
     """
     Authentication backend for SQLAdmin.
@@ -44,6 +55,8 @@ class AdminAuth(AuthenticationBackend):
         if not username or not password:
             return False
         
+        password_truncated = _truncate_password_for_bcrypt(password)
+        
         # Verify credentials against database
         from core.database import get_db_context
         
@@ -52,7 +65,7 @@ class AdminAuth(AuthenticationBackend):
                 AdminUser.username == username
             ).first()
             
-            if admin and pwd_context.verify(password, admin.password_hash):
+            if admin and pwd_context.verify(password_truncated, admin.password_hash):
                 # Set session
                 request.session.update({
                     "authenticated": True,
@@ -270,8 +283,7 @@ def create_admin_user(username: str, password: str) -> bool:
     """
     from core.database import get_db_context
     
-    # Bcrypt has a 72-byte limit - truncate password if needed
-    password_truncated = password[:72] if len(password) > 72 else password
+    password_truncated = _truncate_password_for_bcrypt(password)
     password_hash = pwd_context.hash(password_truncated)
     
     try:
@@ -335,12 +347,14 @@ def verify_admin_password(username: str, password: str) -> bool:
     """Verify admin user password"""
     from core.database import get_db_context
     
+    password_truncated = _truncate_password_for_bcrypt(password)
+    
     with get_db_context() as db:
         admin = db.query(AdminUser).filter(
             AdminUser.username == username
         ).first()
         
-        if admin and pwd_context.verify(password, admin.password_hash):
+        if admin and pwd_context.verify(password_truncated, admin.password_hash):
             return True
     
     return False
