@@ -15,6 +15,7 @@ redis>=5.2
 
 # Admin UI
 sqladmin>=0.15
+itsdangerous>=2.1  # Required for SQLAdmin sessions
 
 # Authentication
 passlib[bcrypt]>=1.7

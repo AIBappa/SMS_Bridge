@@ -49,16 +49,10 @@ class AdminAuth(AuthenticationBackend):
         
         with get_db_context() as db:
             admin = db.query(AdminUser).filter(
-                AdminUser.username == username,
-                AdminUser.is_active == True
+                AdminUser.username == username
             ).first()
             
             if admin and pwd_context.verify(password, admin.password_hash):
-                # Update last login
-                from datetime import datetime
-                admin.last_login = datetime.utcnow()
-                db.commit()
-                
                 # Set session
                 request.session.update({
                     "authenticated": True,
@@ -94,15 +88,14 @@ class SettingsHistoryAdmin(ModelView, model=SettingsHistory):
     icon = "fa-solid fa-gear"
     
     column_list = [
-        SettingsHistory.id,
-        SettingsHistory.version,
+        SettingsHistory.version_id,
         SettingsHistory.is_active,
         SettingsHistory.created_at,
         SettingsHistory.created_by,
     ]
     
-    column_searchable_list = [SettingsHistory.version, SettingsHistory.created_by]
-    column_sortable_list = [SettingsHistory.id, SettingsHistory.created_at, SettingsHistory.is_active]
+    column_searchable_list = [SettingsHistory.created_by]
+    column_sortable_list = [SettingsHistory.version_id, SettingsHistory.created_at, SettingsHistory.is_active]
     column_default_sort = [(SettingsHistory.created_at, True)]
     
     can_create = True
@@ -121,16 +114,12 @@ class AdminUserAdmin(ModelView, model=AdminUser):
     column_list = [
         AdminUser.id,
         AdminUser.username,
-        AdminUser.email,
-        AdminUser.is_active,
-        AdminUser.last_login,
+        AdminUser.is_super_admin,
+        AdminUser.created_at,
     ]
     
-    column_searchable_list = [AdminUser.username, AdminUser.email]
-    column_sortable_list = [AdminUser.id, AdminUser.username, AdminUser.last_login]
-    
-    # Hide password hash in list view
-    column_exclude_list = [AdminUser.password_hash]
+    column_searchable_list = [AdminUser.username]
+    column_sortable_list = [AdminUser.id, AdminUser.username, AdminUser.created_at]
     
     can_create = True
     can_edit = True
@@ -145,13 +134,12 @@ class SMSBridgeLogAdmin(ModelView, model=SMSBridgeLog):
     
     column_list = [
         SMSBridgeLog.id,
-        SMSBridgeLog.log_level,
-        SMSBridgeLog.message,
+        SMSBridgeLog.event,
         SMSBridgeLog.created_at,
     ]
     
-    column_searchable_list = [SMSBridgeLog.message, SMSBridgeLog.log_level]
-    column_sortable_list = [SMSBridgeLog.id, SMSBridgeLog.created_at, SMSBridgeLog.log_level]
+    column_searchable_list = [SMSBridgeLog.event]
+    column_sortable_list = [SMSBridgeLog.id, SMSBridgeLog.created_at, SMSBridgeLog.event]
     column_default_sort = [(SMSBridgeLog.created_at, True)]
     
     can_create = False
@@ -167,20 +155,17 @@ class BackupUserAdmin(ModelView, model=BackupUser):
     
     column_list = [
         BackupUser.id,
-        BackupUser.mobile_number,
-        BackupUser.hash_value,
-        BackupUser.restored,
+        BackupUser.mobile,
+        BackupUser.hash,
         BackupUser.created_at,
+        BackupUser.synced_at,
     ]
     
-    column_searchable_list = [BackupUser.mobile_number]
-    column_sortable_list = [BackupUser.id, BackupUser.created_at, BackupUser.restored]
-    
-    # Hide sensitive data
-    column_exclude_list = [BackupUser.pin_value]
+    column_searchable_list = [BackupUser.mobile]
+    column_sortable_list = [BackupUser.id, BackupUser.created_at, BackupUser.synced_at]
     
     can_create = False
-    can_edit = True  # Allow marking as restored
+    can_edit = True  # Allow marking as synced
     can_delete = True
 
 
@@ -212,14 +197,14 @@ class BlacklistMobileAdmin(ModelView, model=BlacklistMobile):
     
     column_list = [
         BlacklistMobile.id,
-        BlacklistMobile.mobile_number,
+        BlacklistMobile.mobile,
         BlacklistMobile.reason,
-        BlacklistMobile.is_active,
         BlacklistMobile.created_at,
+        BlacklistMobile.created_by,
     ]
     
-    column_searchable_list = [BlacklistMobile.mobile_number, BlacklistMobile.reason]
-    column_sortable_list = [BlacklistMobile.id, BlacklistMobile.created_at, BlacklistMobile.is_active]
+    column_searchable_list = [BlacklistMobile.mobile, BlacklistMobile.reason]
+    column_sortable_list = [BlacklistMobile.id, BlacklistMobile.created_at]
     
     can_create = True
     can_edit = True
@@ -268,7 +253,7 @@ def setup_admin(app: FastAPI) -> Admin:
 # Admin User Management
 # =============================================================================
 
-def create_admin_user(username: str, password: str, email: Optional[str] = None) -> bool:
+def create_admin_user(username: str, password: str) -> bool:
     """
     Create a new admin user.
     Used for initial setup or CLI user creation.
@@ -290,9 +275,7 @@ def create_admin_user(username: str, password: str, email: Optional[str] = None)
             
             admin = AdminUser(
                 username=username,
-                email=email,
                 password_hash=password_hash,
-                is_active=True,
             )
             db.add(admin)
         
@@ -310,8 +293,7 @@ def verify_admin_password(username: str, password: str) -> bool:
     
     with get_db_context() as db:
         admin = db.query(AdminUser).filter(
-            AdminUser.username == username,
-            AdminUser.is_active == True
+            AdminUser.username == username
         ).first()
         
         if admin and pwd_context.verify(password, admin.password_hash):

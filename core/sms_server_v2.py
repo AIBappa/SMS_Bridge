@@ -32,6 +32,7 @@ from core.services import (
     run_validation_pipeline,
     extract_hash_from_message,
 )
+from core.admin.admin import setup_admin
 
 # Logging setup
 logging.basicConfig(
@@ -115,7 +116,12 @@ async def startup_event():
         redis_client.load_blacklist_from_db(mobiles)
         logger.info(f"Loaded {len(mobiles)} blacklisted numbers")
     
-    # 6. Start background workers (if enabled)
+    # 6. Setup Admin UI (if enabled)
+    if settings.admin_enabled:
+        setup_admin(app)
+        logger.info(f"Admin UI mounted at {settings.admin_path}")
+    
+    # 7. Start background workers (if enabled)
     if settings.sync_worker_enabled or settings.audit_worker_enabled:
         from core.workers import start_workers
         start_workers()
