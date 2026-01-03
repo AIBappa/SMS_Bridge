@@ -138,19 +138,15 @@ docker-compose up -d
 
 The admin user will be created automatically on first startup if the credentials are set in `.env` and the user doesn't already exist.
 
-#### Initialize Database and Settings (Optional)
+#### Database Initialization
 
-If you need to manually initialize the database or create default settings:
+Database tables and default settings are automatically created when you deploy:
 
-```bash
-# Interactive mode (recommended for first-time setup)
-cd /home/<user>/Documents/Software/SMS_Laptop_Setup/sms_bridge
-python scripts/init_sms_bridge.py -i
-
-# Or initialize components individually
-python scripts/init_sms_bridge.py --init-db           # Create database tables
-python scripts/init_sms_bridge.py --create-settings   # Create default settings
-```
+- **Docker/Coolify**: `coolify/init/schema.sql` runs automatically on first startup
+- **Manual setup**: Run the schema manually:
+  ```bash
+  psql -h localhost -U postgres -d sms_bridge -f coolify/init/schema.sql
+  ```
 
 #### Admin UI Features
 - **Settings History**: View and create configuration versions (append-only)

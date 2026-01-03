@@ -28,7 +28,6 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 ### 📁 Additional Resources
 - `docs/` - Documentation and examples
 - `tests/` - Testing utilities and sample data
-- `scripts/` - Utility scripts for initialization
 
 ## Concept
 
