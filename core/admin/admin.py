@@ -270,7 +270,9 @@ def create_admin_user(username: str, password: str) -> bool:
     """
     from core.database import get_db_context
     
-    password_hash = pwd_context.hash(password)
+    # Bcrypt has a 72-byte limit - truncate password if needed
+    password_truncated = password[:72] if len(password) > 72 else password
+    password_hash = pwd_context.hash(password_truncated)
     
     try:
         with get_db_context() as db:
