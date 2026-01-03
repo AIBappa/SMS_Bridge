@@ -23,7 +23,8 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
   - Monitoring stack (Prometheus, Grafana)
   - `Dockerfile` - SMS Bridge application container image
   - `init/schema.sql` - Database schema
-- `cloudflare_tunnel/` - Cloudflare Tunnel configuration for secure remote access
+
+**Note:** Cloudflare Tunnel is managed via Cloudflare Zero Trust Dashboard for secure remote access.
 
 ### 📁 Additional Resources
 - `docs/` - Documentation and examples
