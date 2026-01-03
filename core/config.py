@@ -68,6 +68,14 @@ class AppSettings(BaseSettings):
     # Admin UI
     admin_enabled: bool = Field(default=True, description="Enable SQLAdmin UI")
     admin_path: str = Field(default="/admin", description="Admin UI path")
+    admin_creation_secret: str = Field(
+        default="",
+        description="Secret required to create admin users. MUST be set in production!"
+    )
+    admin_creation_lockdown: bool = Field(
+        default=True,
+        description="Prevent admin creation after first admin exists"
+    )
     
     # Metrics
     metrics_enabled: bool = Field(default=True, description="Enable Prometheus metrics")

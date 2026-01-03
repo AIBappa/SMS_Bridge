@@ -60,6 +60,7 @@ docker-compose -f coolify/docker-compose.yml up -d
    cd coolify
    cp .env.example .env
    # Edit .env with your settings
+   # IMPORTANT: Set SMS_BRIDGE_ADMIN_CREATION_SECRET (generate with: openssl rand -hex 32)
    ```
 
 2. **Deploy with Docker Compose**:
@@ -68,7 +69,15 @@ docker-compose -f coolify/docker-compose.yml up -d
    docker-compose up -d
    ```
 
-3. **Verify**: Check that services are running
+3. **Create first admin user** (required for Admin UI access):
+   ```bash
+   python3 scripts/create_admin.py admin YourStrongPassword123
+   # You'll be prompted for the admin creation secret from .env
+   ```
+   
+   See [Admin Security Guide](docs/ADMIN_SECURITY.md) for detailed security information.
+
+4. **Verify**: Check that services are running
    ```bash
    docker-compose ps
    ```
@@ -95,6 +104,7 @@ Default service endpoints:
 
 ## Documentation
 
+- [Admin Security Guide](docs/ADMIN_SECURITY.md) - **Important security information for admin users**
 - [Technical Specification](docs/core/SMS_Bridge_tech_spec_v2.2.md)
 - [Monitoring Specification](docs/core/SMS_Bridge_monitoring_spec_v2.2.md)
 - [Coolify Deployment](coolify/README.md)

@@ -217,6 +217,7 @@ git push origin main
    | `POSTGRES_PASSWORD` | Database password | `secure_password_123` |
    | `REDIS_PASSWORD` | Redis password | `redis_secure_456` |
    | `HASH_SECRET_KEY` | HMAC secret | `your_hmac_secret` |
+   | `SMS_BRIDGE_ADMIN_CREATION_SECRET` | **CRITICAL** Admin creation secret | Generate with `openssl rand -hex 32` |
    | `GRAFANA_ADMIN_PASSWORD` | Grafana admin pass | `grafana_admin_123` |
 
 ### 3. Deploy
@@ -228,7 +229,19 @@ Click **Deploy** in Coolify. The following will happen automatically:
 - Start all services with health checks
 - Configure monitoring stack
 
-### 4. Configure Domain (Optional)
+### 4. Create Admin User (Required)
+
+After deployment, create your first admin user to access the Admin UI:
+
+```bash
+# SSH into your server, then run:
+docker exec -it sms_receiver python3 scripts/create_admin.py admin YourStrongPassword123
+# You'll be prompted for the SMS_BRIDGE_ADMIN_CREATION_SECRET
+```
+
+**🔒 Security Note:** See [Admin Security Guide](../docs/ADMIN_SECURITY.md) for important security information.
+
+### 5. Configure Domain (Optional)
 
 In Coolify:
 1. Go to your service settings
@@ -251,6 +264,7 @@ In Coolify:
 After deployment:
 
 - **SMS Bridge API**: `http://your-domain:8080` or `http://your-ip:8080`
+- **Admin UI**: `http://your-domain:8080/admin` (login with created admin user)
 - **Grafana Dashboard**: `http://your-domain:3001` (admin / your GRAFANA_ADMIN_PASSWORD)
 - **Prometheus**: `http://your-domain:9090`
 
@@ -301,7 +315,26 @@ docker compose up -d
 
 ## Security Notes
 
-- Change all default passwords in production
-- Use HTTPS with a proper domain
-- Consider restricting Prometheus/Grafana ports to internal network
-- Regularly update Docker images for security patches
+### Critical Security Measures
+
+1. **Admin Creation Secret** 🔐
+   - Set a strong `SMS_BRIDGE_ADMIN_CREATION_SECRET` (32+ characters)
+   - Remove from `.env` after creating first admin
+   - See [Admin Security Guide](../docs/ADMIN_SECURITY.md) for details
+
+2. **Admin Creation Lockdown** 🔒
+   - Keep `SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN=True` (default)
+   - Prevents unauthorized admin creation after first admin exists
+
+3. **General Security** 🛡️
+   - Change all default passwords in production
+   - Use HTTPS with a proper domain (via Cloudflare Tunnel or reverse proxy)
+   - Consider restricting Prometheus/Grafana ports to internal network
+   - Regularly update Docker images for security patches
+   - Enable Cloudflare Access/WAF if using Cloudflare Tunnel
+
+### Additional Resources
+
+- 📚 [Admin Security Guide](../docs/ADMIN_SECURITY.md) - **Read this for production deployments!**
+- 🔧 [Technical Specification](../docs/core/SMS_Bridge_tech_spec_v2.2.md)
+- 📊 [Monitoring Specification](../docs/core/SMS_Bridge_monitoring_spec_v2.2.md)

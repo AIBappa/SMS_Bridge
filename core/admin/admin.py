@@ -253,17 +253,53 @@ def setup_admin(app: FastAPI) -> Admin:
 # Admin User Management
 # =============================================================================
 
-def create_admin_user(username: str, password: str) -> bool:
+def create_admin_user(username: str, password: str, creation_secret: Optional[str] = None) -> bool:
     """
-    Create a new admin user.
-    Used for initial setup or CLI user creation.
+    Create a new admin user with security protections.
+    
+    Security features:
+    1. Requires ADMIN_CREATION_SECRET from environment
+    2. Can be locked down after first admin is created
+    
+    Args:
+        username: Admin username
+        password: Admin password (will be hashed)
+        creation_secret: Secret key for admin creation (from .env)
+    
+    Returns:
+        bool: True if user created successfully, False otherwise
     """
     from core.database import get_db_context
+    from core.config import get_settings
+    
+    settings = get_settings()
+    
+    # SECURITY: Require admin creation secret
+    if not settings.admin_creation_secret:
+        logger.error(
+            "ADMIN_CREATION_SECRET not set in environment! "
+            "Set SMS_BRIDGE_ADMIN_CREATION_SECRET to create admin users."
+        )
+        return False
+    
+    if creation_secret != settings.admin_creation_secret:
+        logger.error("Invalid admin creation secret provided")
+        return False
     
     password_hash = pwd_context.hash(password)
     
     try:
         with get_db_context() as db:
+            # SECURITY: Check if admin creation is locked down
+            if settings.admin_creation_lockdown:
+                admin_count = db.query(AdminUser).count()
+                if admin_count > 0:
+                    logger.error(
+                        "Admin creation is locked down. "
+                        "First admin already exists. Disable SMS_BRIDGE_ADMIN_CREATION_LOCKDOWN to create more admins."
+                    )
+                    return False
+            
             # Check if user exists
             existing = db.query(AdminUser).filter(
                 AdminUser.username == username
