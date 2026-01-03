@@ -1,13 +1,12 @@
 """
 SMS Bridge v2.2 - Configuration Module
-Loads application config from environment variables and optional vault file.
+Loads application config from environment variables.
 """
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
@@ -60,13 +59,10 @@ class AppSettings(BaseSettings):
     port: int = Field(default=8000, description="Server bind port")
     workers: int = Field(default=1, description="Number of uvicorn workers")
     
-    # Vault file path (optional - for secrets)
-    vault_file: Optional[str] = Field(default="vault.yml", description="Path to vault.yml")
-    
-    # Database settings (can be overridden by vault)
+    # Database settings (from environment variables)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     
-    # Redis settings (can be overridden by vault)
+    # Redis settings (from environment variables)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     
     # Admin UI
@@ -92,57 +88,13 @@ class AppSettings(BaseSettings):
         env_nested_delimiter = "__"
 
 
-def load_vault(vault_path: str) -> Dict[str, Any]:
-    """Load secrets from vault.yml file"""
-    path = Path(vault_path)
-    if not path.exists():
-        return {}
-    
-    with open(path, 'r') as f:
-        vault_data = yaml.safe_load(f) or {}
-    
-    return vault_data
-
-
-def merge_vault_settings(settings: AppSettings, vault_data: Dict[str, Any]) -> AppSettings:
-    """Merge vault secrets into settings"""
-    if not vault_data:
-        return settings
-    
-    # Database settings from vault
-    if 'database' in vault_data:
-        db_vault = vault_data['database']
-        settings.database.host = db_vault.get('host', settings.database.host)
-        settings.database.port = db_vault.get('port', settings.database.port)
-        settings.database.name = db_vault.get('name', settings.database.name)
-        settings.database.user = db_vault.get('user', settings.database.user)
-        settings.database.password = db_vault.get('password', settings.database.password)
-    
-    # Redis settings from vault
-    if 'redis' in vault_data:
-        redis_vault = vault_data['redis']
-        settings.redis.host = redis_vault.get('host', settings.redis.host)
-        settings.redis.port = redis_vault.get('port', settings.redis.port)
-        settings.redis.db = redis_vault.get('db', settings.redis.db)
-        settings.redis.password = redis_vault.get('password', settings.redis.password)
-    
-    return settings
-
-
 @lru_cache()
 def get_settings() -> AppSettings:
     """
     Get cached application settings.
-    Loads from environment + vault file.
+    Loads from environment variables only.
     """
-    settings = AppSettings()
-    
-    # Load vault if path specified
-    if settings.vault_file:
-        vault_data = load_vault(settings.vault_file)
-        settings = merge_vault_settings(settings, vault_data)
-    
-    return settings
+    return AppSettings()
 
 
 # Convenience functions for dependency injection

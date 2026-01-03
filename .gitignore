@@ -1,5 +1,5 @@
 # Ignore secrets configuration file
-vault.yml
+.env
 
 # Ignore python virtual environment
 sms_env/

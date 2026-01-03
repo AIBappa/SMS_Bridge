@@ -25,7 +25,6 @@ httpx>=0.25
 
 # Environment
 python-dotenv>=1.0
-pyyaml>=6.0
 
 # Background Workers
 apscheduler>=3.10

@@ -21,11 +21,11 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 - `coolify/` - Coolify deployment with Docker Compose
   - Includes Supabase integration
   - Monitoring stack (Prometheus, Grafana)
+  - `Dockerfile` - SMS Bridge application container image
+  - `init/schema.sql` - Database schema
 - `cloudflare_tunnel/` - Cloudflare Tunnel configuration for secure remote access
-- `Dockerfile` - Container image for SMS Bridge application
 
 ### 📁 Additional Resources
-- `schema.sql` - Database schema
 - `docs/` - Documentation and examples
 - `tests/` - Testing utilities and sample data
 - `scripts/` - Utility scripts for initialization
@@ -57,8 +57,9 @@ docker-compose -f coolify/docker-compose.yml up -d
 
 1. **Set up configuration**: Copy and customize configuration files
    ```bash
-   cp vault.example.yml vault.yml
-   # Edit vault.yml with your settings
+   cd coolify
+   cp .env.example .env
+   # Edit .env with your settings
    ```
 
 2. **Deploy with Docker Compose**:

@@ -17,7 +17,7 @@ This setup enables two-way communication between your local K3s instance and the
     *   The `sms_server.py` application can make direct outbound HTTP requests to `https://validation.new-username.workers.dev/sms-gateway`.
     *   This does **not** go through the tunnel. It is a standard egress connection from your K3s cluster to the public internet.
     *   This is used for sending validated SMS data or status updates from your local instance back to the Cloudflare backend.
-    *   The `cf_backend_url` in your `vault.yml` should be set to this URL.
+    *   The `CF_BACKEND_URL` in your `.env` should be set to this URL.
 
 In summary:
 - **Inbound**: Cloudflare Worker -> Tunnel -> Local K3s

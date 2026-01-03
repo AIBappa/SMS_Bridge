@@ -104,7 +104,7 @@ docker exec -it sms_redis redis-cli -a localdev_redis_2026
 ## 📂 Files Changed
 
 - ✅ Removed duplicate `coolify/init/schema.sql`
-- ✅ Updated `docker-compose.yml` to mount root `schema.sql`
+- ✅ Updated `docker-compose.yml` to mount `init/schema.sql`
 - ✅ Fixed environment variable naming (SMS_BRIDGE_ prefix)
 - ✅ Fixed BlacklistMobile startup query
 - ✅ Created `.env` for local development

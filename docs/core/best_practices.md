@@ -147,9 +147,9 @@ python scripts/init_sms_bridge.py --init-db --create-settings
 - **Admin Users**: Manage admin accounts
 
 ### Managing Configuration
-All configuration is stored in `vault.yml` or environment variables.
-- Key variables: `pg_password`, `redis_password`, `grafana_admin_password`, `cf_api_key`, `hmac_secret`.
-- Ensure proper file permissions (600) for configuration files containing secrets.
+All configuration is stored in environment variables (`.env` files in coolify/).
+- Key variables: `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`, `CF_API_KEY`, `HMAC_SECRET`.
+- Ensure proper file permissions (600) for .env files containing secrets.
 
 ## Deployment Management
 
