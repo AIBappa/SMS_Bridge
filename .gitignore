@@ -20,8 +20,6 @@ docs/functionality_old.md
 
 #Ignore log
 *.log
-cloudflare_tunnel/credentials-file.json
-cloudflare_tunnel/config.yml
 
 #Ignore build files
 build/
@@ -33,8 +31,6 @@ __pycache__/
 .idea/
 
 # Secrets and credentials
-cloudflare_tunnel/config.yml
-cloudflare_tunnel/credentials-file.json
 vault.yml
 secrets_bundle_sms_bridge.tar.gz
 secrets_transfer/

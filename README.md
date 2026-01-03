@@ -28,7 +28,6 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 
 ### 📁 Additional Resources
 - `docs/` - Documentation and examples
-- `tests/` - Testing utilities and sample data
 
 ## Concept
 
@@ -103,8 +102,4 @@ Default service endpoints:
 - [Admin Security Guide](docs/ADMIN_SECURITY.md) - **Important security information for admin users**
 - [Technical Specification](docs/core/SMS_Bridge_tech_spec_v2.2.md)
 - [Monitoring Specification](docs/core/SMS_Bridge_monitoring_spec_v2.2.md)
-- [Coolify Deployment](coolify/README.md)
-
-## Testing
-
-See the `tests/` directory for testing utilities and sample data. 
+- [Coolify Deployment](coolify/README.md) 

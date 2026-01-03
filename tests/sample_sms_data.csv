@@ -1,6 +1,0 @@
-sender_number,sms_message,received_timestamp
-+1234567890,"Test message 1 from mobile 9876543210",2025-09-07T12:00:00Z
-+1234567891,"Test message 2 from mobile 9876543211",2025-09-07T12:01:00Z
-+1234567892,"Test message 3 from mobile 9876543212",2025-09-07T12:02:00Z
-+1234567893,"Verification code 1234 for mobile 9876543213",2025-09-07T12:03:00Z
-+1234567894,"Welcome! Your mobile 9876543214 is verified",2025-09-07T12:04:00Z
