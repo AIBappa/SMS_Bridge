@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Paths (edit if needed)
 CLOUDFLARED_DIR=/etc/cloudflared
-ANSIBLE_VAULT_DEST=~/
+CONFIG_DEST=~/
 
 install_cloudflared_files() {
   echo "Installing cloudflared files to $CLOUDFLARED_DIR"
@@ -21,10 +21,10 @@ install_cloudflared_files() {
 }
 
 install_vault() {
-  echo "Placing Ansible vault file under $ANSIBLE_VAULT_DEST"
-  cp -f ./vault.yml "$ANSIBLE_VAULT_DEST/vault.yml"
-  chmod 600 "$ANSIBLE_VAULT_DEST/vault.yml"
-  echo "vault file placed at $ANSIBLE_VAULT_DEST/vault.yml"
+  echo "Placing configuration file under $CONFIG_DEST"
+  cp -f ./vault.yml "$CONFIG_DEST/vault.yml"
+  chmod 600 "$CONFIG_DEST/vault.yml"
+  echo "Configuration file placed at $CONFIG_DEST/vault.yml"
 }
 
 if [ "$EUID" -ne 0 ]; then
@@ -41,7 +41,7 @@ fi
 if [ -f ./vault.yml ]; then
   install_vault
 else
-  echo "No vault.yml found; skipping vault install." >&2
+  echo "No vault.yml found; skipping configuration install." >&2
 fi
 
 cat <<MSG

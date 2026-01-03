@@ -3,7 +3,7 @@ Secrets transfer bundle for SMS Bridge
 Files included:
 - config.yml (cloudflared config)
 - credentials-file.json (cloudflared credentials)
-- vault.yml (Ansible Vault secrets)
+- vault.yml (application secrets)
 
 Transfer instructions:
 1. Copy the tarball to a secure USB or encrypted storage.
@@ -12,7 +12,7 @@ Transfer instructions:
 3. Place files where the systems expect them (examples):
    - cloudflared config: /etc/cloudflared/config.yml
    - cloudflared credentials: /etc/cloudflared/credentials-file.json
-   - Ansible vault: keep in your local dev machine or an operator vault; do NOT commit to repo. Use the vault file at the same relative path when running Ansible.
+   - vault.yml: keep in your local dev machine or secure storage; do NOT commit to repo. Place at the root of the project directory.
 4. Ensure proper permissions: private credentials should be readable only by root or the deploy user: chmod 600 credentials-file.json; chown root:root credentials-file.json
 5. After verifying the files are present, remove the tarball from the target machine or move it to encrypted long-term storage.
 

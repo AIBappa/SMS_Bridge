@@ -274,20 +274,20 @@ groups:
           description: "Retry queue has {{ $value }} items (threshold: 10)"
 ```
 
-## 6. Ansible Integration
+## 6. Schema Reference
 
-### 6.1 Schema Reference
+### 6.1 Database Alignment
 
 **Important**: Grafana dashboard SQL queries must align with table definitions in `schema.sql`.
 
 When updating `schema.sql`:
 1. Update table names/columns in schema
-2. Update corresponding Grafana dashboard queries in Ansible
-3. Redeploy with `upgrade_sms_bridge_k3s.yml`
+2. Update corresponding Grafana dashboard queries
+3. Redeploy monitoring stack
 
-### 6.2 ConfigMap Structure
+### 6.2 Dashboard Configuration
 
-The Grafana SMS dashboard ConfigMap should use table names from `schema.sql`:
+The Grafana SMS dashboard should use table names from `schema.sql`:
 
 ```yaml
 # Tables from schema.sql v2.2:

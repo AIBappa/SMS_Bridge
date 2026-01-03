@@ -11,8 +11,8 @@ if curl -s http://localhost:8080/health > /dev/null; then
     echo "✅ SMS Bridge is running and accessible"
 else
     echo "⚠️  Warning: SMS Bridge may not be running at http://localhost:8080"
-    echo "   Make sure to start the SMS Bridge first with:"
-    echo "   cd .. && ansible-playbook setup_sms_bridge.yml --ask-vault-pass"
+    echo "   Make sure to start the SMS Bridge first with Docker Compose"
+    echo "   cd ../coolify && docker-compose up -d"
 fi
 
 # Start the test application

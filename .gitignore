@@ -1,4 +1,4 @@
-# Ignore Ansible Vault secrets file
+# Ignore secrets configuration file
 vault.yml
 
 # Ignore python virtual environment

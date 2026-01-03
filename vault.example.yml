@@ -1,4 +1,21 @@
-# Example Ansible Vault variables - DO NOT store real secrets here in repo
-postgres_password: "REPLACE_WITH_SECRET"
-redis_password: "REPLACE_WITH_SECRET"
-cloudflare_api_token: "REPLACE_WITH_SECRET"
+# Example configuration file - DO NOT store real secrets here in repo
+# Copy this file to vault.yml and update with your actual credentials
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "sms_bridge"
+  user: "sms_bridge"
+  password: "REPLACE_WITH_SECRET"
+
+redis:
+  host: "localhost"
+  port: 6379
+  password: "REPLACE_WITH_SECRET"
+
+cloudflare:
+  api_token: "REPLACE_WITH_SECRET"
+  zone_id: "REPLACE_WITH_ZONE_ID"
+
+hmac_secret: "REPLACE_WITH_SECRET"
+
