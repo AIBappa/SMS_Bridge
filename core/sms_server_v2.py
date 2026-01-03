@@ -110,10 +110,8 @@ async def startup_event():
     from core.models import BlacklistMobile
     
     with get_db_context() as db:
-        blacklist = db.query(BlacklistMobile).filter(
-            BlacklistMobile.is_active == True
-        ).all()
-        mobiles = [b.mobile_number for b in blacklist]
+        blacklist = db.query(BlacklistMobile).all()
+        mobiles = [b.mobile for b in blacklist]
         redis_client.load_blacklist_from_db(mobiles)
         logger.info(f"Loaded {len(mobiles)} blacklisted numbers")
     

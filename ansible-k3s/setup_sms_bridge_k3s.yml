@@ -133,6 +133,25 @@
         owner: "{{ ansible_user_id }}"
         group: "{{ ansible_user_id }}"
 
+    - name: Create .dockerignore to exclude problematic directories
+      copy:
+        dest: "{{ project_dir }}/.dockerignore"
+        content: |
+          postgres-data
+          backups
+          logs
+          k3s-manifests
+          grafana
+          *.sql
+          !schema.sql
+          migration_*.sql
+          migration_*.txt
+          .git
+          __pycache__
+          *.pyc
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+
     # Build container image 
     - name: Check if buildah is available
       command: which buildah
@@ -175,20 +194,45 @@
       shell: |
         cd {{ project_dir }}
         docker build --no-cache -t {{ python_receiver_image }}:latest .
-        # Save and import into K3s
-        docker save {{ python_receiver_image }}:latest | sudo k3s ctr images import -
       when: docker_available.rc == 0
+
+    - name: Save Docker image to tar file (avoiding pipe EOF issues)
+      shell: |
+        docker save {{ python_receiver_image }}:latest -o /tmp/{{ python_receiver_image }}.tar
+      when: docker_available.rc == 0
+
+    - name: Import Docker image into K3s containerd
+      shell: |
+        sudo k3s ctr images import /tmp/{{ python_receiver_image }}.tar
       become: yes
       become_method: sudo
+      when: docker_available.rc == 0
+
+    - name: Clean up temporary tar file
+      file:
+        path: /tmp/{{ python_receiver_image }}.tar
+        state: absent
+      when: docker_available.rc == 0
 
     - name: Build SMS receiver image with Buildah (no cache)
       shell: |
         cd {{ project_dir }}
         buildah build --no-cache -t {{ python_receiver_image }}:latest .
-        # Push to K3s containerd
-        buildah push {{ python_receiver_image }}:latest containers-storage:{{ python_receiver_image }}:latest
+        # Push to K3s containerd via tar file
         buildah push {{ python_receiver_image }}:latest oci-archive:/tmp/{{ python_receiver_image }}.tar
+      when: docker_available.rc != 0 and buildah_available.rc == 0
+
+    - name: Import Buildah image into K3s containerd
+      shell: |
         sudo k3s ctr images import /tmp/{{ python_receiver_image }}.tar
+      become: yes
+      become_method: sudo
+      when: docker_available.rc != 0 and buildah_available.rc == 0
+
+    - name: Clean up Buildah temporary tar file
+      file:
+        path: /tmp/{{ python_receiver_image }}.tar
+        state: absent
       when: docker_available.rc != 0 and buildah_available.rc == 0
 
     # Create Kubernetes manifests

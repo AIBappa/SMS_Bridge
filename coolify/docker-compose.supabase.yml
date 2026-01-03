@@ -25,8 +25,6 @@ services:
       REDIS_HOST: ${DRAGONFLY_HOST:-dragonfly}
       REDIS_PORT: ${DRAGONFLY_PORT:-6379}
       REDIS_PASSWORD: ${DRAGONFLY_PASSWORD:-}
-      # Security
-      HASH_SECRET_KEY: ${HASH_SECRET_KEY}
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_DIR: /app/logs
@@ -36,13 +34,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    networks:
-      - external_services
-
-# Connect to existing network where Supabase/Dragonfly are running
-# Change 'supabase_default' to your actual network name
-# Find it with: docker network ls
-networks:
-  external_services:
-    name: ${DOCKER_NETWORK:-supabase_default}
-    external: true

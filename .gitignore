@@ -44,3 +44,4 @@ docs/system concept.odp
 
 # Ignore test files
 test_geoprasidh_integration.sh
+coolify/.env
