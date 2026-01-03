@@ -1,0 +1,51 @@
+version: "3.8"
+
+# SMS Bridge - Simplified deployment for existing Supabase + Dragonfly
+# Use this when you already have PostgreSQL (Supabase) and Redis (Dragonfly) running
+
+services:
+  sms_receiver:
+    build:
+      context: ..
+      dockerfile: coolify/Dockerfile
+    container_name: sms_receiver
+    restart: unless-stopped
+    ports:
+      - "${SMS_RECEIVER_PORT:-8080}:8080"
+    volumes:
+      - ./logs:/app/logs:rw
+    environment:
+      # Backend Integration
+      CF_API_KEY: ${CF_API_KEY}
+      CF_BACKEND_URL: ${CF_BACKEND_URL}
+      # Supabase PostgreSQL Connection
+      POSTGRES_HOST: ${SUPABASE_DB_HOST:-supabase-db}
+      POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      # Dragonfly (Redis-compatible) Connection
+      REDIS_HOST: ${DRAGONFLY_HOST:-dragonfly}
+      REDIS_PORT: ${DRAGONFLY_PORT:-6379}
+      REDIS_PASSWORD: ${DRAGONFLY_PASSWORD:-}
+      # Security
+      HASH_SECRET_KEY: ${HASH_SECRET_KEY}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_DIR: /app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - external_services
+
+# Connect to existing network where Supabase/Dragonfly are running
+# Change 'supabase_default' to your actual network name
+# Find it with: docker network ls
+networks:
+  external_services:
+    name: ${DOCKER_NETWORK:-supabase_default}
+    external: true
