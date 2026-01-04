@@ -35,14 +35,16 @@ Exposed at: `GET /metrics` (Prometheus text format)
 
 | Metric Name | Type | Labels | Description |
 |-------------|------|--------|-------------|
-| `sms_bridge_requests_total` | Counter | endpoint, method, status_code | Total HTTP requests |
-| `sms_bridge_request_duration_seconds` | Histogram | endpoint | Request latency (buckets: 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10) |
-| `sms_bridge_validation_checks_total` | Counter | check_name, status | Validation results (pass/fail/disabled) |
+| `sms_bridge_onboarding_total` | Counter | status | Total onboarding requests (success/failed) |
+| `sms_bridge_sms_received_total` | Counter | status | Total SMS messages received (received/failed) |
+| `sms_bridge_pin_collected_total` | Counter | status | Total PINs collected (success/failed) |
+| `sms_bridge_rate_limited_total` | Counter | - | Total rate-limited requests |
+| `sms_bridge_validation_failures_total` | Counter | check | Validation failures by check type (header_hash_check, foreign_number_check, count_check, blacklist_check) |
 | `sms_bridge_sync_queue_length` | Gauge | - | Current items in sync_queue |
-| `sms_bridge_retry_queue_length` | Gauge | - | Current items in retry_queue |
 | `sms_bridge_audit_buffer_length` | Gauge | - | Current items in audit_buffer |
-| `sms_bridge_redis_connected` | Gauge | - | Redis connection status (1=up, 0=down) |
-| `sms_bridge_postgres_connected` | Gauge | - | Postgres connection status (1=up, 0=down) |
+| `sms_bridge_blacklist_size` | Gauge | - | Current size of blacklist set |
+| `sms_bridge_active_onboarding_count` | Gauge | - | Current number of active onboarding hashes |
+| `sms_bridge_verified_count` | Gauge | - | Current number of verified mobiles awaiting PIN |
 
 ### 2.2 Infrastructure Metrics
 
@@ -63,108 +65,165 @@ Exposed at: `GET /metrics` (Prometheus text format)
 ### 3.1 Implementation Example
 
 ```python
-# core/observability/metrics.py
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+# core/observability/metrics_v2.py
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
 
 # Counters
-REQUEST_COUNT = Counter(
-    'sms_bridge_requests_total',
-    'Total HTTP requests',
-    ['endpoint', 'method', 'status_code']
+ONBOARDING_TOTAL = Counter(
+    'sms_bridge_onboarding_total',
+    'Total onboarding registration requests',
+    ['status']  # success, failed
 )
 
-VALIDATION_COUNT = Counter(
-    'sms_bridge_validation_checks_total',
-    'Validation check results',
-    ['check_name', 'status']
+SMS_RECEIVED_TOTAL = Counter(
+    'sms_bridge_sms_received_total',
+    'Total SMS messages received',
+    ['status']  # received, failed
 )
 
-# Histograms
-REQUEST_LATENCY = Histogram(
-    'sms_bridge_request_duration_seconds',
-    'Request latency',
-    ['endpoint'],
-    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+PIN_COLLECTED_TOTAL = Counter(
+    'sms_bridge_pin_collected_total',
+    'Total PINs collected',
+    ['status']  # success, failed
+)
+
+RATE_LIMITED_TOTAL = Counter(
+    'sms_bridge_rate_limited_total',
+    'Total rate-limited requests',
+)
+
+VALIDATION_FAILURES_TOTAL = Counter(
+    'sms_bridge_validation_failures_total',
+    'Total validation check failures',
+    ['check']  # header_hash_check, foreign_number_check, count_check, blacklist_check
 )
 
 # Gauges
-SYNC_QUEUE_LENGTH = Gauge('sms_bridge_sync_queue_length', 'Sync queue length')
-RETRY_QUEUE_LENGTH = Gauge('sms_bridge_retry_queue_length', 'Retry queue length')
-AUDIT_BUFFER_LENGTH = Gauge('sms_bridge_audit_buffer_length', 'Audit buffer length')
-REDIS_CONNECTED = Gauge('sms_bridge_redis_connected', 'Redis connection status')
-POSTGRES_CONNECTED = Gauge('sms_bridge_postgres_connected', 'Postgres connection status')
+SYNC_QUEUE_LENGTH = Gauge('sms_bridge_sync_queue_length', 'Current length of sync_queue')
+AUDIT_BUFFER_LENGTH = Gauge('sms_bridge_audit_buffer_length', 'Current length of audit_buffer')
+BLACKLIST_SIZE = Gauge('sms_bridge_blacklist_size', 'Current size of blacklist set')
+ACTIVE_ONBOARDING_COUNT = Gauge('sms_bridge_active_onboarding_count', 'Current number of active onboarding hashes')
+VERIFIED_COUNT = Gauge('sms_bridge_verified_count', 'Current number of verified mobiles awaiting PIN')
 
 def metrics_endpoint():
     """Endpoint handler for /metrics"""
+    # Collect current Redis state before returning metrics
+    collect_redis_metrics()
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+def collect_redis_metrics():
+    """Update gauge metrics from Redis state"""
+    try:
+        from core import redis_v2 as redis_client
+        r = redis_client.get_redis()
+        
+        SYNC_QUEUE_LENGTH.set(r.llen("sync_queue"))
+        AUDIT_BUFFER_LENGTH.set(r.llen("audit_buffer"))
+        BLACKLIST_SIZE.set(r.scard("blacklist"))
+        
+        # Count active patterns
+        ACTIVE_ONBOARDING_COUNT.set(sum(1 for _ in r.scan_iter("active_onboarding:*")))
+        VERIFIED_COUNT.set(sum(1 for _ in r.scan_iter("verified:*")))
+    except Exception as e:
+        logger.error(f"Failed to collect Redis metrics: {e}")
 ```
 
-### 3.2 Middleware for Request Metrics
+### 3.2 Recording Metrics in Endpoints
 
 ```python
-# core/observability/middleware.py
-import time
-from starlette.middleware.base import BaseHTTPMiddleware
-from .metrics import REQUEST_COUNT, REQUEST_LATENCY
+# Example usage in core/sms_server_v2.py
+from core.observability.metrics_v2 import (
+    record_onboarding,
+    record_sms_received,
+    record_pin_collected,
+    record_rate_limited,
+    record_validation_failure
+)
 
-class MetricsMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        start_time = time.time()
-        response = await call_next(request)
-        duration = time.time() - start_time
-        
-        endpoint = request.url.path
-        REQUEST_COUNT.labels(
-            endpoint=endpoint,
-            method=request.method,
-            status_code=response.status_code
-        ).inc()
-        REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
-        
+@app.post("/onboarding/register")
+async def register(request: OnboardingRequest):
+    try:
+        # ... business logic ...
+        record_onboarding(status="success")
         return response
+    except HTTPException as e:
+        if e.status_code == 429:
+            record_rate_limited()
+        record_onboarding(status="failed")
+        raise
+
+@app.post("/sms/receive")
+async def receive_sms(request: SmsReceiveRequest):
+    try:
+        # ... validation checks ...
+        if check_failed:
+            record_validation_failure(check="header_hash_check")
+        
+        record_sms_received(status="received")
+        return response
+    except Exception:
+        record_sms_received(status="failed")
+        raise
 ```
 
 ## 4. Grafana Dashboards
 
 ### 4.1 SMS Bridge Overview Dashboard
 
-**Panel 1: Request Rate**
+**Panel 1: Onboarding Request Rate**
 ```promql
-rate(sms_bridge_requests_total[5m])
+rate(sms_bridge_onboarding_total[5m])
 ```
-- Group by: endpoint, status_code
+- Group by: status
 - Visualization: Time series
 
-**Panel 2: Request Latency (P95)**
+**Panel 2: SMS Processing Rate**
 ```promql
-histogram_quantile(0.95, rate(sms_bridge_request_duration_seconds_bucket[5m]))
+rate(sms_bridge_sms_received_total[5m])
 ```
-- Group by: endpoint
+- Group by: status
 - Visualization: Time series
 
-**Panel 3: Validation Success Rate**
+**Panel 3: PIN Collection Rate**
 ```promql
-sum(rate(sms_bridge_validation_checks_total{status="pass"}[5m])) 
-/ 
-sum(rate(sms_bridge_validation_checks_total{status!="disabled"}[5m])) * 100
+rate(sms_bridge_pin_collected_total[5m])
 ```
-- Visualization: Gauge (0-100%)
+- Group by: status
+- Visualization: Time series
 
-**Panel 4: Queue Depths**
+**Panel 4: Validation Failure Rate**
+```promql
+rate(sms_bridge_validation_failures_total[5m])
+```
+- Group by: check
+- Visualization: Time series (stacked)
+
+**Panel 5: Queue Depths**
 ```promql
 sms_bridge_sync_queue_length
-sms_bridge_retry_queue_length
 sms_bridge_audit_buffer_length
 ```
 - Visualization: Time series (stacked)
 
-**Panel 5: Service Health**
+**Panel 6: Active Sessions**
 ```promql
-sms_bridge_redis_connected
-sms_bridge_postgres_connected
+sms_bridge_active_onboarding_count
+sms_bridge_verified_count
 ```
-- Visualization: Stat (1=green, 0=red)
+- Visualization: Time series
+
+**Panel 7: Blacklist Size**
+```promql
+sms_bridge_blacklist_size
+```
+- Visualization: Stat
+
+**Panel 8: Rate Limiting**
+```promql
+rate(sms_bridge_rate_limited_total[5m])
+```
+- Visualization: Time series
 
 ### 4.2 Data Tables Dashboard (PostgreSQL Direct)
 
@@ -216,62 +275,62 @@ LIMIT 50
 groups:
   - name: sms_bridge_alerts
     rules:
-      # Critical: Service Down
-      - alert: SMSBridgeRedisDown
-        expr: sms_bridge_redis_connected == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Redis connection lost"
-          description: "SMS Bridge cannot connect to Redis for {{ $labels.instance }}"
-
-      - alert: SMSBridgePostgresDown
-        expr: sms_bridge_postgres_connected == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "PostgreSQL connection lost"
-          description: "SMS Bridge cannot connect to PostgreSQL for {{ $labels.instance }}"
-
-      # Warning: Performance Issues
-      - alert: SMSBridgeHighLatency
-        expr: histogram_quantile(0.95, rate(sms_bridge_request_duration_seconds_bucket[5m])) > 2
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High request latency"
-          description: "P95 latency is {{ $value }}s (threshold: 2s)"
-
-      - alert: SMSBridgeHighErrorRate
-        expr: rate(sms_bridge_requests_total{status_code=~"5.."}[5m]) / rate(sms_bridge_requests_total[5m]) > 0.1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High error rate"
-          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 10%)"
-
-      # Warning: Queue Backlog
+      # Critical: Queue Backlog
       - alert: SMSBridgeSyncQueueBacklog
         expr: sms_bridge_sync_queue_length > 100
         for: 5m
         labels:
-          severity: warning
+          severity: critical
         annotations:
-          summary: "Sync queue backlog"
+          summary: "Sync queue backlog detected"
           description: "Sync queue has {{ $value }} items (threshold: 100)"
 
-      - alert: SMSBridgeRetryQueueGrowing
-        expr: sms_bridge_retry_queue_length > 10
+      - alert: SMSBridgeAuditBufferBacklog
+        expr: sms_bridge_audit_buffer_length > 500
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "Retry queue growing"
-          description: "Retry queue has {{ $value }} items (threshold: 10)"
+          summary: "Audit buffer backlog detected"
+          description: "Audit buffer has {{ $value }} items (threshold: 500)"
+
+      # Warning: High Failure Rates
+      - alert: SMSBridgeHighValidationFailures
+        expr: rate(sms_bridge_validation_failures_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High validation failure rate"
+          description: "Validation failures: {{ $value }} per second"
+
+      - alert: SMSBridgeHighRateLimiting
+        expr: rate(sms_bridge_rate_limited_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate limiting activity"
+          description: "Rate limited requests: {{ $value }} per second"
+
+      - alert: SMSBridgeOnboardingFailures
+        expr: rate(sms_bridge_onboarding_total{status="failed"}[5m]) / rate(sms_bridge_onboarding_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High onboarding failure rate"
+          description: "Onboarding failure rate: {{ $value | humanizePercentage }} (threshold: 20%)"
+
+      # Info: Blacklist Growth
+      - alert: SMSBridgeBlacklistGrowth
+        expr: delta(sms_bridge_blacklist_size[1h]) > 50
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Unusual blacklist growth"
+          description: "Blacklist grew by {{ $value }} entries in 1 hour"
 ```
 
 ## 6. Schema Reference
