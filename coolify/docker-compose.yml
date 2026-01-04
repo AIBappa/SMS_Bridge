@@ -57,7 +57,7 @@ services:
       MAX_CLIENT_CONN: "1000"
       DEFAULT_POOL_SIZE: "10"
     healthcheck:
-      test: ["CMD-SHELL", "psql -h localhost -p 6432 -U postgres -d postgres -c 'SELECT 1' > /dev/null 2>&1 || exit 1"]
+      test: ["CMD", "nc", "-z", "localhost", "6432"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -117,6 +117,7 @@ services:
       # Admin UI Credentials
       SMS_BRIDGE_ADMIN_USERNAME: ${SMS_BRIDGE_ADMIN_USERNAME:-admin}
       SMS_BRIDGE_ADMIN_PASSWORD: ${SMS_BRIDGE_ADMIN_PASSWORD}
+      SMS_BRIDGE_ADMIN_SECRET_KEY: ${SMS_BRIDGE_ADMIN_SECRET_KEY}
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_DIR: /app/logs

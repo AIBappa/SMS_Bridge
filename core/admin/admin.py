@@ -133,7 +133,6 @@ class AdminUserAdmin(ModelView, model=AdminUser):
     
     column_searchable_list = [AdminUser.username]
     column_sortable_list = [AdminUser.id, AdminUser.username, AdminUser.created_at]
-    column_exclude_list = [AdminUser.password_hash]
     form_excluded_columns = [AdminUser.password_hash]
     
     can_create = True
@@ -178,7 +177,6 @@ class BackupUserAdmin(ModelView, model=BackupUser):
     
     column_searchable_list = [BackupUser.mobile]
     column_sortable_list = [BackupUser.id, BackupUser.created_at, BackupUser.synced_at]
-    column_exclude_list = [BackupUser.pin]
     form_excluded_columns = [BackupUser.pin]
     
     can_create = False
