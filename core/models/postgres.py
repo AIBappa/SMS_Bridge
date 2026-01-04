@@ -5,10 +5,10 @@ Aligned with schema.sql and Tech Spec v2.2
 from datetime import datetime
 from typing import Optional
 from sqlalchemy import (
-    Column, Integer, String, Text, Boolean, DateTime, JSON,
-    Index, create_engine
+    Column, Integer, String, Text, Boolean, DateTime,
+    Index
 )
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 
 Base = declarative_base()

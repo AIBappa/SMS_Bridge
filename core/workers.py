@@ -146,6 +146,8 @@ def sync_worker():
             except httpx.HTTPError as e:
                 logger.error(f"Sync failed for item: {e}")
                 # Re-queue on failure (push back to front)
+                # NOTE: Consider implementing retry counter in payload or dead-letter queue
+                # to prevent infinite retry loops if sync_url is permanently unavailable
                 redis_client.lpush_sync_queue(item)
                 failed += 1
                 break  # Stop processing on failure

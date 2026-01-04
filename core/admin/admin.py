@@ -133,6 +133,8 @@ class AdminUserAdmin(ModelView, model=AdminUser):
     
     column_searchable_list = [AdminUser.username]
     column_sortable_list = [AdminUser.id, AdminUser.username, AdminUser.created_at]
+    column_exclude_list = [AdminUser.password_hash]
+    form_excluded_columns = [AdminUser.password_hash]
     
     can_create = True
     can_edit = True
@@ -176,6 +178,8 @@ class BackupUserAdmin(ModelView, model=BackupUser):
     
     column_searchable_list = [BackupUser.mobile]
     column_sortable_list = [BackupUser.id, BackupUser.created_at, BackupUser.synced_at]
+    column_exclude_list = [BackupUser.pin]
+    form_excluded_columns = [BackupUser.pin]
     
     can_create = False
     can_edit = True  # Allow marking as synced
@@ -313,7 +317,7 @@ def create_admin_user(username: str, password: str) -> bool:
         return True
         
     except Exception as e:
-        logger.error(f"Failed to create admin user: {e}")
+        logger.exception("Failed to create admin user")
         return False
 
 

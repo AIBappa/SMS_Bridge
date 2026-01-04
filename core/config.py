@@ -95,9 +95,10 @@ class AppSettings(BaseSettings):
         description="Load active settings from Postgres to Redis on startup"
     )
     
-    class Config:
-        env_prefix = "SMS_BRIDGE_"
-        env_nested_delimiter = "__"
+    model_config = {
+        "env_prefix": "SMS_BRIDGE_",
+        "env_nested_delimiter": "__",
+    }
 
 
 @lru_cache()
