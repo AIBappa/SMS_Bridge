@@ -30,7 +30,7 @@ All 8 containers running:
 ## 🔧 Useful Commands
 
 ```bash
-cd /home/shantanu/Documents/Software/SMS_Laptop_Setup/sms_bridge/coolify
+cd ../sms_bridge/coolify
 
 # View all services
 docker compose ps

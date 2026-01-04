@@ -274,13 +274,18 @@ class FallbackWorker:
         if not self._enabled:
             return
         
+        # Validate PIN is provided (NOT NULL constraint in DB)
+        if not pin:
+            logger.warning(f"Skipping backup_user write for {mobile[-4:]}: PIN is required but was None/empty")
+            return
+        
         from core.models import BackupUser
         
         try:
             # Hash PIN before storage using mobile+hash as deterministic salt
             # This ensures PINs are never stored in plaintext
             salt = f"{mobile}{hash_val}"
-            hashed_pin = hash_pin(pin, salt) if pin else None
+            hashed_pin = hash_pin(pin, salt)
             
             with get_db_context() as db:
                 backup = BackupUser(

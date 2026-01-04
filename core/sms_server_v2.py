@@ -157,13 +157,11 @@ async def shutdown_event():
     # Backup Redis state to Postgres
     try:
         from core.database import get_db_context
-        redis_client.backup_to_power_down_store(
-            get_db_context().__enter__(),
-            None
-        )
+        with get_db_context() as db:
+            redis_client.backup_to_power_down_store(db, None)
         logger.info("Redis state backed up")
     except Exception as e:
-        logger.error(f"Error backing up Redis state: {e}")
+        logger.exception("Error backing up Redis state")
     
     # Close connections
     redis_client.close_redis()

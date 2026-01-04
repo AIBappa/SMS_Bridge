@@ -431,14 +431,10 @@ def restore_from_power_down_store(db_session):
     
     pipe = r.pipeline()
     for entry in entries:
-        pipe.set(entry.key_name, entry.key_value)
-        # Set TTL for temporary keys
-        if entry.key_name.startswith("active_onboarding:"):
-            pipe.expire(entry.key_name, 900)
-        elif entry.key_name.startswith("verified:"):
-            pipe.expire(entry.key_name, 3600)
-        elif entry.key_name.startswith("pending_sms:"):
-            pipe.expire(entry.key_name, 900)
+        pipe.set(entry.key_name, entry.value)
+        # Set TTL from original_ttl if available
+        if entry.original_ttl is not None and entry.original_ttl > 0:
+            pipe.expire(entry.key_name, entry.original_ttl)
     pipe.execute()
     
     # Clear power_down_store after successful restore
