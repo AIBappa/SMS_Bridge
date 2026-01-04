@@ -6,6 +6,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict, Any
+from urllib.parse import quote_plus
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
@@ -22,7 +23,9 @@ class DatabaseSettings(BaseModel):
     @property
     def url(self) -> str:
         """SQLAlchemy connection URL (sync)"""
-        return f"postgresql+psycopg2://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        encoded_user = quote_plus(self.user)
+        encoded_password = quote_plus(self.password)
+        return f"postgresql+psycopg2://{encoded_user}:{encoded_password}@{self.host}:{self.port}/{self.name}"
 
 
 class RedisSettings(BaseModel):
@@ -40,7 +43,12 @@ class RedisSettings(BaseModel):
     @property
     def url(self) -> str:
         """Redis connection URL"""
-        auth = f":{self.password}@" if self.password else ""
+        # None = no auth (omit auth section), empty string = explicit empty password (":@")
+        if self.password is None:
+            auth = ""
+        else:
+            encoded_password = quote_plus(self.password)
+            auth = f":{encoded_password}@"
         return f"redis://{auth}{self.host}:{self.port}/{self.db}"
 
 
