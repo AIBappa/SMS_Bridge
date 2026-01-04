@@ -240,13 +240,19 @@ def setup_admin(app: FastAPI) -> Admin:
     """
     settings = get_settings()
     
+    # Validate admin secret key
+    if not settings.admin_secret_key:
+        raise ValueError(
+            "Admin secret key not configured. Set SMS_BRIDGE_ADMIN_SECRET_KEY environment variable."
+        )
+    
     # Create admin with authentication
     admin = Admin(
         app,
         engine=get_engine(),
         title="SMS Bridge Admin",
         base_url=settings.admin_path,
-        authentication_backend=AdminAuth(secret_key="change-me-in-production"),
+        authentication_backend=AdminAuth(secret_key=settings.admin_secret_key),
     )
     
     # Register model views

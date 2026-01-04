@@ -16,6 +16,7 @@ from core.config import get_settings
 from core import redis_v2 as redis_client
 from core.database import get_db_context
 from core.models import SMSBridgeLog
+from core.services import hash_pin
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +188,7 @@ def flush_audit_buffer():
         with get_db_context() as db:
             for event in events:
                 log_entry = SMSBridgeLog(
-                    log_level="INFO",
-                    message=event.get("event", "UNKNOWN"),
+                    event=event.get("event", "UNKNOWN"),
                     details=event.get("details", {}),
                     created_at=datetime.fromisoformat(event.get("timestamp", datetime.utcnow().isoformat())),
                 )
@@ -277,12 +277,16 @@ class FallbackWorker:
         from core.models import BackupUser
         
         try:
+            # Hash PIN before storage using mobile+hash as deterministic salt
+            # This ensures PINs are never stored in plaintext
+            salt = f"{mobile}{hash_val}"
+            hashed_pin = hash_pin(pin, salt) if pin else None
+            
             with get_db_context() as db:
                 backup = BackupUser(
-                    mobile_number=mobile,
-                    hash_value=hash_val,
-                    pin_value=pin,
-                    restored=False,
+                    mobile=mobile,
+                    hash=hash_val,
+                    pin=hashed_pin,
                 )
                 db.add(backup)
             

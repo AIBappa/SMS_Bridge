@@ -78,12 +78,13 @@ class BackupUser(Base):
     """
     Backup Credentials (Hot Path Backup)
     Stores validated user credentials from PIN_COLLECTED events.
+    Note: PIN is stored as SHA256 hash (64 chars), not plaintext.
     """
     __tablename__ = "backup_users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     mobile = Column(String(20), nullable=False)
-    pin = Column(String(10), nullable=False)
+    pin = Column(String(64), nullable=False)  # SHA256 hash (64 hex chars)
     hash = Column(String(20), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     synced_at = Column(DateTime)

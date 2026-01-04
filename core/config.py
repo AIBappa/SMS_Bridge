@@ -68,6 +68,10 @@ class AppSettings(BaseSettings):
     # Admin UI
     admin_enabled: bool = Field(default=True, description="Enable SQLAdmin UI")
     admin_path: str = Field(default="/admin", description="Admin UI path")
+    admin_secret_key: str = Field(
+        default="",
+        description="Secret key for admin session encryption (required in production)"
+    )
     admin_username: str = Field(
         default="",
         description="Default admin username (auto-created on startup if not exists)"
@@ -102,7 +106,17 @@ def get_settings() -> AppSettings:
     Get cached application settings.
     Loads from environment variables only.
     """
-    return AppSettings()
+    settings = AppSettings()
+    
+    # Validate admin_secret_key in non-debug mode
+    if settings.admin_enabled and not settings.debug:
+        if not settings.admin_secret_key or settings.admin_secret_key == "":
+            raise ValueError(
+                "SMS_BRIDGE_ADMIN_SECRET_KEY must be set in production. "
+                "Generate a secure random key (e.g., using 'openssl rand -hex 32')"
+            )
+    
+    return settings
 
 
 # Convenience functions for dependency injection

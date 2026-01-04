@@ -1,7 +1,7 @@
 # SMS Bridge v2.2 Dependencies
 
 # Core Framework
-fastapi>=0.116.0
+fastapi>=0.120.1
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 pydantic-settings>=2.0.0
@@ -34,7 +34,7 @@ apscheduler>=3.10
 python-multipart>=0.0.18
 
 # Templates
-jinja2>=3.1
+jinja2>=3.1.5  # CVE fixes in 3.1.5+
 
 # Optional: Production
 gunicorn>=21.0

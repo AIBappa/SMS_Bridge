@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_logs_created ON sms_bridge_logs(created_at);
 CREATE TABLE IF NOT EXISTS backup_users (
     id SERIAL PRIMARY KEY,
     mobile VARCHAR(20) NOT NULL,
-    pin VARCHAR(10) NOT NULL,
+    pin VARCHAR(64) NOT NULL,  -- SHA256 hash of PIN (not plaintext)
     hash VARCHAR(20) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     synced_at TIMESTAMPTZ

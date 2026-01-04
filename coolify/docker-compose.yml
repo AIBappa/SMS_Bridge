@@ -92,7 +92,7 @@ services:
     ports:
       - "${SMS_RECEIVER_PORT:-8080}:8080"
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -127,7 +127,8 @@ services:
   # ===========================================
 
   prometheus:
-    image: prom/prometheus:latest
+    # Version: 2.48.1 (LTS) - Update version tag when upgrading
+    image: prom/prometheus:v2.48.1
     container_name: sms_prometheus
     restart: unless-stopped
     networks:
@@ -143,7 +144,8 @@ services:
       - '--web.enable-lifecycle'
 
   grafana:
-    image: grafana/grafana:latest
+    # Version: 10.2.3 (Stable) - Update version tag when upgrading
+    image: grafana/grafana:10.2.3
     container_name: sms_grafana
     restart: unless-stopped
     networks:
