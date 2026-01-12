@@ -1,0 +1,74 @@
+---
+- name: Restart SMS Bridge K3s Infrastructure
+  hosts: localhost
+  become: yes
+  
+  collections:
+    - kubernetes.core
+
+  vars:
+    namespace: "sms-bridge"
+
+  tasks:
+    - name: Restart all deployments
+      kubernetes.core.k8s:
+        state: present
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item }}"
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        definition:
+          spec:
+            template:
+              metadata:
+                annotations:
+                  kubectl.kubernetes.io/restartedAt: "{{ ansible_date_time.iso8601 }}"
+      loop:
+        - postgres
+        - redis
+        - pgbouncer
+        - prometheus
+        - grafana
+        - postgres-exporter
+        - redis-exporter
+        - sms-receiver
+
+    - name: Wait for all deployments to be ready after restart
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item }}"
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+        wait_timeout: 300
+      loop:
+        - postgres
+        - redis
+        - pgbouncer
+        - prometheus
+        - grafana
+        - postgres-exporter
+        - redis-exporter
+        - sms-receiver
+
+    - name: Get pod status after restart
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        kubeconfig: /etc/rancher/k3s/k3s.yaml
+      register: pod_status
+
+    - name: Display restart status
+      debug:
+        msg: "Pod {{ item.metadata.name }} is {{ item.status.phase }}"
+      loop: "{{ pod_status.resources }}"
+
+    - name: Display restart completion
+      debug:
+        msg: "SMS Bridge K3s infrastructure has been restarted successfully."

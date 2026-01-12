@@ -1,0 +1,20 @@
+services:
+  sms_test_app:
+    build: .
+    ports:
+      - "3002:3000"
+    environment:
+      - SMS_BRIDGE_URL=http://172.17.0.1:30080
+    volumes:
+      - ./uploads:/app/uploads
+      - ./sample_sms_data.csv:/app/sample_sms_data.csv:ro
+    networks:
+      - sms_test_network
+    restart: unless-stopped
+
+networks:
+  sms_test_network:
+    driver: bridge
+
+volumes:
+  test_uploads:

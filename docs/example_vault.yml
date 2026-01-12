@@ -1,0 +1,36 @@
+# Example vault.yml for SMS Gateway Setup
+# This is a PLAIN TEXT version of the vault file. DO NOT use this in production without encryption!
+#
+# Instructions for Setting Up Ansible Vault (for beginners):
+# 1. Install Ansible if not already installed: sudo apt install ansible
+# 2. Create this file with your actual secrets (replace the fake values below).
+# 3. Encrypt the file: ansible-vault encrypt example_vault.yml
+#    - You'll be prompted to set a vault password (remember it!).
+# 4. Rename the encrypted file to 'vault.yml' (or update setup_sms_gateway.yml to reference 'example_vault.yml').
+# 5. When running the playbook, use: ansible-playbook setup_sms_gateway.yml --ask-vault-pass
+#    - Enter the vault password when prompted.
+#
+# Security Notes:
+# - Never commit the plain text version to version control. This file is for demonstration purposes only.
+# - Always encrypt sensitive files with Ansible Vault.
+# - Add this file to your .gitignore to prevent accidental commits.
+# - Use strong, unique passwords/keys.
+# - For hash_secret_key, generate a random 32-char hex key with: openssl rand -hex 16
+
+# Database password (fake: replace with your PostgreSQL user password)
+pg_password: 'fake_pg_password_123'
+
+# Redis password (fake: replace with your Redis password)
+redis_password: 'fake_redis_password_456'
+
+# Grafana admin password (fake: replace with your Grafana admin password)
+grafana_admin_password: 'fake_grafana_admin_789'
+
+# Cloudflare API key (fake: replace with your actual CF API key)
+cf_api_key: 'fake_cf_api_key_abc123'
+
+# Cloudflare backend URL (this needs to be updated with your actual Cloudflare Workers URL)
+cf_backend_url: 'https://validation.new-username.workers.dev/sms-gateway'
+
+# Hash secret key for HMAC validation (fake: replace with a 32-char hex key, e.g., from openssl rand -hex 16)
+hash_secret_key: 'fake_hash_key_0123456789abcdef'

@@ -1,0 +1,66 @@
+---
+- name: Stop SMS Bridge Infrastructure
+  hosts: localhost
+  become: no
+  connection: local
+  
+  tasks:
+    - name: Stop SMS Receiver container
+      community.docker.docker_container:
+        name: sms_receiver
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Grafana container
+      community.docker.docker_container:
+        name: grafana
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Prometheus container
+      community.docker.docker_container:
+        name: prometheus
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Redis Exporter container
+      community.docker.docker_container:
+        name: redis_exporter
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Postgres Exporter container
+      community.docker.docker_container:
+        name: postgres_exporter
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop PgBouncer container
+      community.docker.docker_container:
+        name: pgbouncer
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Redis container
+      community.docker.docker_container:
+        name: redis
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop PostgreSQL container
+      community.docker.docker_container:
+        name: postgres
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Show remaining SMS Bridge containers
+      shell: docker ps --filter "name=sms_receiver" --filter "name=grafana" --filter "name=prometheus" --filter "name=redis" --filter "name=postgres" --filter "name=pgbouncer" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+      register: remaining_containers
+    
+    - name: Display remaining containers
+      debug:
+        var: remaining_containers.stdout_lines
+      
+    - name: Show final status
+      debug:
+        msg: "SMS Bridge containers stopped successfully"

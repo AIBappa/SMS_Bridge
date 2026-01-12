@@ -1,0 +1,238 @@
+---
+- name: Restart SMS Bridge Infrastructure
+  hosts: localhost
+  become: no
+  vars_files:
+    - vault.yml
+  
+  tasks:
+    - name: Stop SMS Receiver container
+      community.docker.docker_container:
+        name: sms_receiver
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Grafana container
+      community.docker.docker_container:
+        name: grafana
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Prometheus container
+      community.docker.docker_container:
+        name: prometheus
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Redis Exporter container
+      community.docker.docker_container:
+        name: redis_exporter
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Postgres Exporter container
+      community.docker.docker_container:
+        name: postgres_exporter
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop PgBouncer container
+      community.docker.docker_container:
+        name: pgbouncer
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop Redis container
+      community.docker.docker_container:
+        name: redis
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Stop PostgreSQL container
+      community.docker.docker_container:
+        name: postgres
+        state: stopped
+      ignore_errors: yes
+    
+    - name: Wait for containers to stop
+      pause:
+        seconds: 5
+    
+    - name: Start PostgreSQL container
+      community.docker.docker_container:
+        name: postgres
+        image: postgres:15
+        state: started
+        restart_policy: always
+        env:
+          POSTGRES_DB: sms_bridge
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: "{{ pg_password }}"
+        ports:
+          - "5432:5432"
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+          - "{{ ansible_env.HOME }}/sms_bridge/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro"
+        networks:
+          - name: sms_network
+    
+    - name: Start Redis container
+      community.docker.docker_container:
+        name: redis
+        image: redis:7-alpine
+        state: started
+        restart_policy: always
+        command: redis-server --requirepass "{{ redis_password }}"
+        ports:
+          - "6379:6379"
+        volumes:
+          - redis_data:/data
+        networks:
+          - name: sms_network
+    
+    - name: Start PgBouncer container
+      community.docker.docker_container:
+        name: pgbouncer
+        image: pgbouncer/pgbouncer:latest
+        state: started
+        restart_policy: always
+        env:
+          DATABASES_HOST: postgres
+          DATABASES_PORT: "5432"
+          DATABASES_USER: postgres
+          DATABASES_PASSWORD: "{{ pg_password }}"
+          DATABASES_DBNAME: sms_bridge
+          POOL_MODE: transaction
+          SERVER_RESET_QUERY: DISCARD ALL
+          MAX_CLIENT_CONN: "100"
+          DEFAULT_POOL_SIZE: "20"
+          SERVER_LIFETIME: "3600"
+          SERVER_IDLE_TIMEOUT: "600"
+          LOG_CONNECTIONS: "1"
+          LOG_DISCONNECTIONS: "1"
+          LOG_POOLER_ERRORS: "1"
+          STATS_PERIOD: "60"
+        ports:
+          - "6432:5432"
+        networks:
+          - name: sms_network
+        depends_on:
+          - postgres
+    
+    - name: Start Postgres Exporter container
+      community.docker.docker_container:
+        name: postgres_exporter
+        image: prometheuscommunity/postgres-exporter
+        state: started
+        restart_policy: always
+        env:
+          DATA_SOURCE_NAME: "postgresql://postgres:{{ pg_password }}@postgres:5432/sms_bridge?sslmode=disable"
+        ports:
+          - "9187:9187"
+        networks:
+          - name: sms_network
+        depends_on:
+          - postgres
+    
+    - name: Start Redis Exporter container
+      community.docker.docker_container:
+        name: redis_exporter
+        image: oliver006/redis_exporter
+        state: started
+        restart_policy: always
+        env:
+          REDIS_ADDR: "redis://redis:6379"
+          REDIS_PASSWORD: "{{ redis_password }}"
+        ports:
+          - "9121:9121"
+        networks:
+          - name: sms_network
+        depends_on:
+          - redis
+    
+    - name: Start Prometheus container
+      community.docker.docker_container:
+        name: prometheus
+        image: prom/prometheus
+        state: started
+        restart_policy: always
+        ports:
+          - "9090:9090"
+        volumes:
+          - "{{ ansible_env.HOME }}/sms_bridge/prometheus.yml:/etc/prometheus/prometheus.yml:ro"
+          - prometheus_data:/prometheus
+        networks:
+          - name: sms_network
+    
+    - name: Start Grafana container
+      community.docker.docker_container:
+        name: grafana
+        image: grafana/grafana
+        state: started
+        restart_policy: always
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+        ports:
+          - "3001:3000"
+        volumes:
+          - grafana_data:/var/lib/grafana
+          - "{{ ansible_env.HOME }}/sms_bridge/grafana/provisioning:/etc/grafana/provisioning:ro"
+        networks:
+          - name: sms_network
+    
+    - name: Start SMS Receiver container
+      community.docker.docker_container:
+        name: sms_receiver
+        image: sms_receiver:latest
+        state: started
+        restart_policy: always
+        working_dir: /app
+        command: python sms_server.py
+        env:
+          DB_HOST: pgbouncer
+          DB_PORT: "5432"
+          DB_NAME: sms_bridge
+          DB_USER: postgres
+          DB_PASSWORD: "{{ pg_password }}"
+          REDIS_HOST: redis
+          REDIS_PORT: "6379"
+          REDIS_PASSWORD: "{{ redis_password }}"
+          CF_API_KEY: "{{ cf_api_key }}"
+          CF_BACKEND_URL: "{{ cf_backend_url }}"
+          HASH_SECRET_KEY: "{{ hash_secret_key }}"
+        ports:
+          - "8080:8080"
+        volumes:
+          - "{{ ansible_env.HOME }}/sms_bridge/sms_server.py:/app/sms_server.py:ro"
+          - "{{ ansible_env.HOME }}/sms_bridge/checks:/app/checks:ro"
+        networks:
+          - name: sms_network
+        depends_on:
+          - postgres
+          - redis
+          - pgbouncer
+    
+    - name: Wait for containers to start
+      pause:
+        seconds: 15
+    
+    - name: Show container status
+      shell: docker ps --filter "name=sms_receiver" --filter "name=grafana" --filter "name=prometheus" --filter "name=redis" --filter "name=postgres" --filter "name=pgbouncer" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+      register: container_status
+    
+    - name: Display container status
+      debug:
+        var: container_status.stdout_lines
+        
+    - name: Test health endpoint
+      uri:
+        url: http://localhost:8080/health
+        method: GET
+      register: health_check
+      ignore_errors: yes
+      retries: 3
+      delay: 5
+      
+    - name: Display health status
+      debug:
+        msg: "SMS Receiver health: {{ health_check.json.status if health_check.json is defined else 'Not responding' }}"

@@ -1,0 +1,87 @@
+---
+- name: Install K3s (One-time setup)
+  hosts: localhost
+  become: yes  # Need sudo for K3s installation only
+  
+  tasks:
+    - name: Debug distribution info
+      debug:
+        msg: "Distribution: {{ ansible_distribution }}, OS Family: {{ ansible_os_family }}"
+
+    - name: Check if K3s is already installed
+      stat:
+        path: /usr/local/bin/k3s
+      register: k3s_installed
+
+    - name: Skip installation if K3s already exists
+      debug:
+        msg: "K3s is already installed at /usr/local/bin/k3s"
+      when: k3s_installed.stat.exists
+
+    - name: Install K3s using official method (latest stable)
+      shell: |
+        curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+      when: not k3s_installed.stat.exists
+      register: k3s_install_result
+
+    - name: Show K3s installation output
+      debug:
+        var: k3s_install_result
+      when: not k3s_installed.stat.exists
+
+    - name: Wait for K3s to be ready
+      wait_for:
+        port: 6443
+        host: localhost
+        delay: 10
+        timeout: 300
+      when: not k3s_installed.stat.exists
+
+    - name: Get current user info
+      setup:
+      become: no
+
+    - name: Add kubectl alias for k3s to user's bashrc
+      lineinfile:
+        path: "/home/{{ ansible_env.SUDO_USER | default(ansible_user_id) }}/.bashrc"
+        line: "alias kubectl='k3s kubectl'"
+        create: yes
+      become: no
+
+    - name: Set KUBECONFIG environment variable in user's bashrc
+      lineinfile:
+        path: "/home/{{ ansible_env.SUDO_USER | default(ansible_user_id) }}/.bashrc"
+        line: "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+        create: yes
+      become: no
+
+    - name: Install Python pip
+      package:
+        name: python3-pip
+        state: present
+
+    - name: Install Python Kubernetes library for current user
+      pip:
+        name:
+          - kubernetes
+          - pyyaml
+          - openshift
+          - jsonpatch
+        state: present
+        extra_args: --user
+      become: no
+
+    - name: Show completion message
+      debug:
+        msg: |
+          K3s installation completed!
+          
+          - K3s is running on port 6443
+          - kubectl alias added to ~/.bashrc
+          - KUBECONFIG environment variable set
+          - Python kubernetes library installed
+          
+          Please run 'source ~/.bashrc' or start a new terminal session to use the kubectl alias.
+          
+          You can now run the main SMS Bridge deployment with:
+          ansible-playbook -i inventory.txt setup_sms_bridge_k3s.yml --ask-vault-pass

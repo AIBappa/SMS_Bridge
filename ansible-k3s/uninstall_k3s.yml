@@ -1,0 +1,68 @@
+---
+- name: Uninstall K3s and Clean Up SMS Bridge
+  hosts: localhost
+  become: yes
+
+  vars:
+    project_dir: "{{ ansible_env.HOME }}/sms_bridge"
+
+  tasks:
+    - name: Stop K3s service
+      systemd:
+        name: k3s
+        state: stopped
+      ignore_errors: yes
+
+    - name: Run K3s uninstall script
+      shell: /usr/local/bin/k3s-uninstall.sh
+      ignore_errors: yes
+
+    - name: Remove K3s directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/rancher
+        - /var/lib/rancher
+        - /var/lib/kubelet
+        - /var/log/containers
+        - /var/log/pods
+        - /opt/cni
+      ignore_errors: yes
+
+    - name: Remove K3s binaries
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/k3s
+        - /usr/local/bin/kubectl
+        - /usr/local/bin/crictl
+        - /usr/local/bin/ctr
+      ignore_errors: yes
+
+    - name: Clean up project postgres data directory
+      file:
+        path: "{{ project_dir }}/postgres-data"
+        state: absent
+      become: no
+
+    - name: Clean up K3s manifests directory
+      file:
+        path: "{{ project_dir }}/k3s-manifests"
+        state: absent
+      become: no
+
+    - name: Remove K3s aliases from bashrc
+      lineinfile:
+        path: "{{ ansible_env.HOME }}/.bashrc"
+        regexp: "{{ item }}"
+        state: absent
+      loop:
+        - "alias kubectl='k3s kubectl'"
+        - "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+      become: no
+
+    - name: Display cleanup status
+      debug:
+        msg: "K3s has been uninstalled and SMS Bridge K3s artifacts have been cleaned up."
