@@ -55,28 +55,90 @@ docker-compose -f coolify/docker-compose.yml up -d
 
 ## Quick Start
 
-1. **Set up configuration**: Copy and customize configuration files
+### Production Deployment (Coolify/Docker Compose)
+
+1. **Run setup script**: Prepares directories and configuration
    ```bash
    cd coolify
-   cp .env.example .env
-   # Edit .env with your settings
-   # IMPORTANT: Set SMS_BRIDGE_ADMIN_USERNAME and SMS_BRIDGE_ADMIN_PASSWORD
+   ./setup.sh
    ```
 
-2. **Deploy with Docker Compose**:
+2. **Configure environment**: Edit `.env` with your secure credentials
    ```bash
-   cd coolify
+   nano .env
+   # IMPORTANT: Set all passwords and secrets (look for CHANGE_ME)
+   ```
+
+3. **Deploy services**:
+   ```bash
    docker-compose up -d
    ```
    
    Admin user will be **auto-created** on first startup from .env credentials.
 
-3. **Verify**: Check that services are running
+4. **Verify deployment**: Check that services are running
    ```bash
    docker-compose ps
+   docker-compose logs -f sms_receiver
    ```
-   
-   Login to Admin UI at: http://localhost:8080/admin/
+
+See [coolify/README.md](coolify/README.md) for detailed deployment options and troubleshooting.
+
+### Local Development
+
+For local testing without full deployment:
+
+```bash
+# Install Python dependencies
+pip install -r core/requirements.txt
+
+# Set environment variables
+export POSTGRES_HOST=localhost
+export POSTGRES_DB=sms_bridge
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=your_password
+export REDIS_HOST=localhost
+export REDIS_PASSWORD=your_redis_password
+
+# Run the application
+python -m core.sms_server_v2
+```
+
+**Database Setup for Local Development:**
+
+```bash
+# Create database and run schema
+psql -U postgres -c "CREATE DATABASE sms_bridge;"
+psql -U postgres -d sms_bridge -f coolify/init/schema.sql
+```
+
+**Access Points:**
+- SMS Bridge API: <http://localhost:8080>
+- Health Check: <http://localhost:8080/health>
+- Metrics: <http://localhost:8080/metrics>
+- Admin UI: <http://localhost:8080/admin/>
+
+**Useful Commands:**
+
+```bash
+# View logs
+docker-compose logs -f sms_receiver
+
+# Restart service
+docker-compose restart sms_receiver
+
+# Stop all services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up -d --build sms_receiver
+
+# Database access
+docker-compose exec postgres psql -U postgres -d sms_bridge
+
+# Redis access
+docker-compose exec redis redis-cli -a YOUR_REDIS_PASSWORD
+```
 
 ## API Endpoints
 
