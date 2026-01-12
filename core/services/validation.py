@@ -43,7 +43,7 @@ class HeaderHashCheck(ValidationCheck):
     """
     name = "header_hash_check"
     
-    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs: Any) -> Tuple[int, Optional[str]]:
         """
         Args:
             message: SMS message body (e.g., "ONBOARD:A3B7K2M9")
@@ -83,7 +83,7 @@ class ForeignNumberCheck(ValidationCheck):
     """
     name = "foreign_number_check"
     
-    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs: Any) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Full mobile with country code (e.g., "+9199XXYYZZAA")
@@ -146,7 +146,7 @@ class CountCheck(ValidationCheck):
     """
     name = "count_check"
     
-    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs: Any) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Sender mobile number
@@ -172,7 +172,7 @@ class BlacklistCheck(ValidationCheck):
     """
     name = "blacklist_check"
     
-    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs: Any) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Mobile number to check
