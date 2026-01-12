@@ -81,17 +81,17 @@ docker-compose -f coolify/docker-compose.yml up -d
 ## API Endpoints
 
 ### Inbound Endpoints (SMS Bridge receives)
-- **POST `http://localhost:8000/onboarding/register`** - Generate or return onboarding hash for mobile number
-- **GET `http://localhost:8000/health`** - Health status of SMS Bridge service
-- **POST `http://localhost:8000/sms/receive`** - Receive webhook from mobile device for incoming SMS data
+- **POST `http://localhost:8080/onboarding/register`** - Generate or return onboarding hash for mobile number
+- **GET `http://localhost:8080/health`** - Health status of SMS Bridge service
+- **POST `http://localhost:8080/sms/receive`** - Receive webhook from mobile device for incoming SMS data
   - *This is where the SMS Receiver (mobile) sends received SMS data*
-- **POST `http://localhost:8000/pin-setup`** - Submit PIN after mobile verification
+- **POST `http://localhost:8080/pin-setup`** - Submit PIN after mobile verification
 
 ### Admin Endpoints
-- **POST `http://localhost:8000/admin/trigger-recovery`** - Trigger manual recovery sync to backend (Admin only)
+- **POST `http://localhost:8080/admin/trigger-recovery`** - Trigger manual recovery sync to backend (Admin only)
 
 ### Metrics & Monitoring
-- **GET `http://localhost:8000/metrics`** - Prometheus metrics
+- **GET `http://localhost:8080/metrics`** - Prometheus metrics
 
 ### Outbound Webhook Contract (External backend receives)
 - **POST `{sync_url_from_settings}`** - Receive validated SMS data in format: `{mobile_number, pin, hash}`
@@ -99,10 +99,10 @@ docker-compose -f coolify/docker-compose.yml up -d
 ### Service Access
 
 Default service endpoints:
-- **SMS Bridge API**: http://localhost:8000
+- **SMS Bridge API**: http://localhost:8080
 - **Grafana Dashboard**: http://localhost:3001
 - **Prometheus Metrics**: http://localhost:9090
-- **Admin UI**: http://localhost:8000/admin/
+- **Admin UI**: http://localhost:8080/admin/
 
 ## Mobile Setup Required
 
