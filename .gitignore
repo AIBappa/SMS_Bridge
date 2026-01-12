@@ -19,6 +19,7 @@ docs/functionality_old.md
 
 
 #Ignore log
+coolify/logs/
 *.log
 
 #Ignore build files
