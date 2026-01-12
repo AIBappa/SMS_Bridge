@@ -43,14 +43,17 @@ class HeaderHashCheck(ValidationCheck):
     """
     name = "header_hash_check"
     
-    def _execute(self, message: str, allowed_prefix: str, hash_length: int,
-                 **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
         """
         Args:
             message: SMS message body (e.g., "ONBOARD:A3B7K2M9")
             allowed_prefix: Expected prefix (e.g., "ONBOARD:")
             hash_length: Expected hash length (e.g., 8)
         """
+        message = kwargs['message']
+        allowed_prefix = kwargs['allowed_prefix']
+        hash_length = kwargs['hash_length']
+        
         # Validate message format
         expected_length = len(allowed_prefix) + hash_length
         if len(message) != expected_length:
@@ -80,13 +83,15 @@ class ForeignNumberCheck(ValidationCheck):
     """
     name = "foreign_number_check"
     
-    def _execute(self, mobile_number: str, allowed_countries: list,
-                 **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Full mobile with country code (e.g., "+9199XXYYZZAA")
             allowed_countries: List of allowed country codes (e.g., ["+91", "+44"])
         """
+        mobile_number = kwargs['mobile_number']
+        allowed_countries = kwargs['allowed_countries']
+        
         # Extract country code from mobile
         country_code = self._extract_country_code(mobile_number)
         if country_code is None:
@@ -141,13 +146,15 @@ class CountCheck(ValidationCheck):
     """
     name = "count_check"
     
-    def _execute(self, mobile_number: str, count_threshold: int,
-                 **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Sender mobile number
             count_threshold: Maximum SMS count per minute
         """
+        mobile_number = kwargs['mobile_number']
+        count_threshold = kwargs['count_threshold']
+        
         # Increment counter (creates with TTL 60s if new)
         count = redis_client.incr_rate(mobile_number, ttl_seconds=60)
         
@@ -165,11 +172,13 @@ class BlacklistCheck(ValidationCheck):
     """
     name = "blacklist_check"
     
-    def _execute(self, mobile_number: str, **kwargs) -> Tuple[int, Optional[str]]:
+    def _execute(self, **kwargs) -> Tuple[int, Optional[str]]:
         """
         Args:
             mobile_number: Mobile number to check
         """
+        mobile_number = kwargs['mobile_number']
+        
         is_blacklisted = redis_client.sismember_blacklist(mobile_number)
         
         if is_blacklisted:
