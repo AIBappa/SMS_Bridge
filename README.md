@@ -32,9 +32,9 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 
 ## Concept
 
-The idea is that older mobiles act as SMS receivers and the laptop aggregates all received SMSes in a PostgreSQL database. Duplicate SMSes are filtered and only unique SMS numbers are forwarded to the cloud database (example uses Cloudflare D1).
+The idea is that older mobiles act as SMS receivers and the laptop aggregates all received SMSes in a PostgreSQL database. Duplicate SMSes are filtered and only unique SMS numbers are forwarded to the external backend.
 
-This method can verify mobile numbers that have been written to Cloudflare D1 via IP input. Users can send SMS to older mobile numbers to confirm their mobile numbers after submitting an onboarding application via IP/Ethernet network.
+This method can verify mobile numbers via SMS. Users can send SMS to older mobile numbers to confirm their mobile numbers after submitting an onboarding application via IP/Ethernet network.
 
 ## Deployment
 
@@ -78,12 +78,31 @@ docker-compose -f coolify/docker-compose.yml up -d
    
    Login to Admin UI at: http://localhost:8080/admin/
 
-## Service Access
+## API Endpoints
+
+### Inbound Endpoints (SMS Bridge receives)
+- **POST `http://localhost:8000/onboarding/register`** - Generate or return onboarding hash for mobile number
+- **GET `http://localhost:8000/health`** - Health status of SMS Bridge service
+- **POST `http://localhost:8000/sms/receive`** - Receive webhook from mobile device for incoming SMS data
+  - *This is where the SMS Receiver (mobile) sends received SMS data*
+- **POST `http://localhost:8000/pin-setup`** - Submit PIN after mobile verification
+
+### Admin Endpoints
+- **POST `http://localhost:8000/admin/trigger-recovery`** - Trigger manual recovery sync to backend (Admin only)
+
+### Metrics & Monitoring
+- **GET `http://localhost:8000/metrics`** - Prometheus metrics
+
+### Outbound Webhook Contract (External backend receives)
+- **POST `{sync_url_from_settings}`** - Receive validated SMS data in format: `{mobile_number, pin, hash}`
+
+### Service Access
 
 Default service endpoints:
-- **SMS Receiver**: http://localhost:8080
+- **SMS Bridge API**: http://localhost:8000
 - **Grafana Dashboard**: http://localhost:3001
 - **Prometheus Metrics**: http://localhost:9090
+- **Admin UI**: http://localhost:8000/admin/
 
 ## Mobile Setup Required
 

@@ -7,9 +7,35 @@ info:
     OpenAPI file describes inbound endpoints implemented by the SMS Bridge
     and the outbound webhook contract used when the SMS Bridge forwards
     validated user data to an external backend.
+  endpoints:
+    - path: /onboarding/register
+      method: POST
+      description: Generate or return onboarding hash for mobile number
+      authentication: Required (Bearer Token)
+    - path: /health
+      method: GET
+      description: Health status of SMS Bridge service
+      authentication: Required (Bearer Token)
+    - path: /sms/receive
+      method: POST
+      description: Receive webhook from mobile device for incoming SMS data
+      authentication: Required (Bearer Token)
+      note: This is where the SMS Receiver (mobile) sends received SMS data
+    - path: /pin-setup
+      method: POST
+      description: Submit PIN after mobile verification
+      authentication: Required (Bearer Token)
+    - path: /outbound/validated-sms
+      method: POST
+      description: Outbound webhook contract for validated user data
+      authentication: Required (Bearer Token)
+    - path: /admin/trigger-recovery
+      method: POST
+      description: Trigger manual recovery sync to backend (Admin only)
+      authentication: Required (Bearer Token)
 servers:
   - url: https://your-tunnel-domain.com
-    description: Public endpoint (via Cloudflare tunnel)
+    description: Public endpoint
   - url: http://localhost:8080
     description: Local endpoint for on-prem/mobile testing
 components:
