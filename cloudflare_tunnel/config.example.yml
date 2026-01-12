@@ -1,7 +1,0 @@
-# Example cloudflared config - fill with your values and DO NOT commit real credentials
-tunnel: <TUNNEL-UUID>
-credentials-file: /etc/cloudflared/credentials-file.json
-ingress:
-  - hostname: smsgraf.vlifecycle.com
-    service: http://localhost:30080
-  - service: http_status:404

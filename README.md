@@ -4,27 +4,31 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 
 ## Project Structure
 
-This project now provides two deployment options:
+### 📁 Core Application
+- `core/` - **Core application package** (Python code)
+  - `sms_server_v2.py` - Main SMS processing application
+  - `redis_v2.py` - Async Redis client with pooling
+  - `workers.py` - Background workers for abuse detection and monitoring
+  - `requirements.txt` - Python dependencies
+  - `config.py` - Configuration management
+  - `database.py` - Database connection management
+  - `services/` - Validation and utility modules
+  - `observability/` - Prometheus metrics and monitoring
+  - `models/` - Database models and schemas
+  - `admin/` - Admin interface
 
-### 📁 ansible-docker/
-Docker-based deployment using `community.docker` Ansible collection
-- Simple container orchestration
-- Good for development and testing
-- See [ansible-docker/README.md](ansible-docker/README.md) for details
+### 📁 Deployment Options
+- `coolify/` - Coolify deployment with Docker Compose
+  - Includes Supabase integration
+  - Monitoring stack (Prometheus, Grafana)
+  - `Dockerfile` - SMS Bridge application container image
+  - `init/schema.sql` - Database schema
+  - `config/` - Grafana and Prometheus configuration
 
-### 📁 ansible-k3s/
-Kubernetes-based deployment using K3s and `kubernetes.core` Ansible collection
-- Production-ready orchestration
-- Built-in monitoring and scaling
-- See [ansible-k3s/README.md](ansible-k3s/README.md) for details
+**Note:** Cloudflare Tunnel is managed via Cloudflare Zero Trust Dashboard for secure remote access.
 
-### 📁 Shared Files
-- `vault.yml` - Encrypted secrets (create from `docs/example_vault.yml`)
-- `schema.sql` - Database schema
-- `sms_server.py` - Main SMS processing application
-- `checks/` - Validation modules
+### 📁 Additional Resources
 - `docs/` - Documentation and examples
-- `tests/` - Testing utilities and sample data
 
 ## Concept
 
@@ -32,75 +36,51 @@ The idea is that older mobiles act as SMS receivers and the laptop aggregates al
 
 This method can verify mobile numbers that have been written to Cloudflare D1 via IP input. Users can send SMS to older mobile numbers to confirm their mobile numbers after submitting an onboarding application via IP/Ethernet network.
 
-## Deployment Options
+## Deployment
 
-This project offers two deployment methods with separate folder organization:
+### Using Coolify
+See [coolify/README.md](coolify/README.md) for detailed deployment instructions using Coolify.
 
-### 📦 Docker Deployment (`ansible-docker/`)
-- **Traditional approach** using community.docker collection
-- **Single command deployment** with vault password
-- **Lightweight** and familiar for Docker users
-- Uses individual containers with custom networks
-
-### ☸️ K3s Deployment (`ansible-k3s/`)  
-- **Kubernetes approach** using lightweight K3s
-- **Two-step deployment**: K3s install (sudo) + deployment (vault only)
-- **Production-ready** with proper orchestration
-- Uses Kubernetes manifests with deployments and services
-
-Both methods deploy identical infrastructure with the same services and capabilities.
+### Using Docker Compose
+```bash
+docker-compose -f coolify/docker-compose.yml up -d
+```
 
 ## Prerequisites
 
-### Common Requirements for both Methods of Deployment
 - Linux laptop (tested on Ubuntu/Debian) or WSL environment
-- Ansible installed
-- Git (for cloning)
-
-### For Docker Deployment
 - Docker and Docker Compose
-- `community.docker` Ansible collection
-
-### For K3s Deployment  
-- `kubernetes.core` and `community.general` Ansible collections
-   - This can be installed with bash command :> `ansible-galaxy collection install kubernetes.core:1.2.1 community.general:3.8.1`
-- Docker or Buildah (for building container images)
-   - Note: Docker can be installed with bash command:> `sudo apt install docker.io`
+- Python 3.9+ (for local development)
+- Git (for cloning)
 
 ## Quick Start
 
-### Option 1: Docker Deployment
-```bash
-cd ansible-docker
-ansible-playbook -i inventory.txt setup_sms_bridge.yml --ask-vault-pass
-```
-
-### Option 2: K3s Deployment
-```bash
-# Step 1: Install K3s (one-time, requires sudo, run from project root, verbose output)
-ansible-playbook -i ansible-k3s/inventory.txt ansible-k3s/install_k3s.yml --ask-become-pass -vvv
-
-# Step 2: Deploy SMS Bridge (vault password only, run from project root, verbose output)
-ansible-playbook -i ansible-k3s/inventory.txt ansible-k3s/setup_sms_bridge_k3s.yml --ask-vault-pass --ask-become-pass -vvv
-```
-
-## Setup Steps
-
-1. **Create Vault File**: Copy and customize the vault file
+1. **Set up configuration**: Copy and customize configuration files
    ```bash
-   cp docs/example_vault.yml vault.yml
-   ansible-vault encrypt vault.yml
+   cd coolify
+   cp .env.example .env
+   # Edit .env with your settings
+   # IMPORTANT: Set SMS_BRIDGE_ADMIN_USERNAME and SMS_BRIDGE_ADMIN_PASSWORD
    ```
 
-2. **Choose Deployment Method**: Navigate to either `ansible-docker/` or `ansible-k3s/`
+2. **Deploy with Docker Compose**:
+   ```bash
+   cd coolify
+   docker-compose up -d
+   ```
+   
+   Admin user will be **auto-created** on first startup from .env credentials.
 
-3. **Follow Method-Specific README**: Each folder has detailed instructions
-
-4. **Verify**: Check that services are running and accessible
+3. **Verify**: Check that services are running
+   ```bash
+   docker-compose ps
+   ```
+   
+   Login to Admin UI at: http://localhost:8080/admin/
 
 ## Service Access
 
-Both deployment methods provide access to:
+Default service endpoints:
 - **SMS Receiver**: http://localhost:8080
 - **Grafana Dashboard**: http://localhost:3001
 - **Prometheus Metrics**: http://localhost:9090
@@ -109,7 +89,7 @@ Both deployment methods provide access to:
 
 - Install SMS_Gateway app on older Android devices
 - May require rooted device or developer mode
-- Configure to send SMSes to laptop endpoint. This endpoint is noted in sms_server.py.
+- Configure to send SMSes to laptop endpoint (configured in application settings)
 
 ## Planned Updates
 
@@ -120,20 +100,7 @@ Both deployment methods provide access to:
 
 ## Documentation
 
-- [Best Practices](docs/best_practices.md)
-- [Functionality Overview](docs/functionality.md)
-- [Example Vault Configuration](docs/example_vault.yml)
-
-## Testing
-
-See the `tests/` directory for testing utilities and sample data.
-
-## Migration
-
-To switch between deployment methods:
-
-1. Stop current deployment
-2. Navigate to the other deployment folder
-3. Run the setup playbook
-
-Both methods use the same data directories and configuration. 
+- [Admin Security Guide](docs/ADMIN_SECURITY.md) - **Important security information for admin users**
+- [Technical Specification](docs/core/SMS_Bridge_tech_spec_v2.2.md)
+- [Monitoring Specification](docs/core/SMS_Bridge_monitoring_spec_v2.2.md)
+- [Coolify Deployment](coolify/README.md) 

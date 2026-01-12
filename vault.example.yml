@@ -1,4 +1,0 @@
-# Example Ansible Vault variables - DO NOT store real secrets here in repo
-postgres_password: "REPLACE_WITH_SECRET"
-redis_password: "REPLACE_WITH_SECRET"
-cloudflare_api_token: "REPLACE_WITH_SECRET"

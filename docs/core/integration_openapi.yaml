@@ -1,0 +1,448 @@
+openapi: 3.0.3
+info:
+  title: SMS Bridge Integration API
+  version: 1.0.0
+  description: >-
+    Machine-readable API specification for the SMS Bridge integration. This
+    OpenAPI file describes inbound endpoints implemented by the SMS Bridge
+    and the outbound webhook contract used when the SMS Bridge forwards
+    validated user data to an external backend.
+servers:
+  - url: https://your-tunnel-domain.com
+    description: Public endpoint (via Cloudflare tunnel)
+  - url: http://localhost:8080
+    description: Local endpoint for on-prem/mobile testing
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API-Key
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Short machine-readable error code
+        message:
+          type: string
+          description: Human readable error message
+        details:
+          type: object
+          description: Optional object with further details or validation errors
+        timestamp:
+          type: string
+          format: date-time
+          description: Server timestamp (UTC)
+      example:
+        code: VALIDATION_ERROR
+        message: Invalid mobile number format
+        details:
+          mobile_number: Must be E.164
+        timestamp: '2025-09-19T12:00:00Z'
+
+    HealthChecks:
+      type: object
+      properties:
+        database:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        redis:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        batch_processor:
+          type: string
+          enum: [running, stopped, degraded]
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          $ref: '#/components/schemas/HealthChecks'
+      example:
+        status: healthy
+        service: sms-bridge
+        version: 1.0.0
+        timestamp: '2025-09-19T12:00:00Z'
+        checks:
+          database: healthy
+          redis: healthy
+          batch_processor: running
+
+    OnboardRegisterRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 formatted mobile number
+        email:
+          type: string
+          format: email
+          description: Email address for onboarding (optional)
+        device_id:
+          type: string
+          description: Unique device identifier (optional)
+      required: [mobile_number]
+      example:
+        mobile_number: +9199XXYYZZAA
+
+    OnboardHashResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        sms_receiving_number:
+          type: string
+          description: The number user should send SMS to
+        hash:
+          type: string
+          description: Fixed-length Base32 hash for onboarding (length from settings)
+        generated_at:
+          type: string
+          format: date-time
+        user_deadline:
+          type: string
+          format: date-time
+          description: User-facing deadline for SMS submission (informational)
+        user_timelimit_seconds:
+          type: integer
+          description: Seconds until user_deadline (for UI countdown)
+      required: [status, sms_receiving_number, hash, generated_at, user_deadline, user_timelimit_seconds]
+      example:
+        status: success
+        sms_receiving_number: '+919000000000'
+        hash: A3B7K2M9
+        generated_at: '2025-01-15T12:00:00Z'
+        user_deadline: '2025-01-15T12:05:00Z'
+        user_timelimit_seconds: 300
+
+    OnboardHashError:
+      type: object
+      properties:
+        status:
+          type: string
+        error:
+          type: string
+        code:
+          type: string
+      example:
+        status: error
+        error: Mobile number already onboarded
+        code: DUPLICATE_MOBILE
+
+    SmsReceiveRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 format (e.g. +9199XXYYZZAA)
+        message:
+          type: string
+        received_at:
+          type: string
+          format: date-time
+        sender:
+          type: string
+      required: [mobile_number, message, received_at]
+      example:
+        mobile_number: "+9199XXYYZZAA"
+        message: "ONBOARD:a06f0b7..."
+        received_at: '2025-09-19T12:00:00Z'
+        sender: "+9199XXYYZZAA"
+
+    SmsReceiveResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message_id:
+          type: string
+          description: UUID assigned to the stored message
+        queued_for_processing:
+          type: boolean
+      required: [status, message_id, queued_for_processing]
+      example:
+        status: received
+        message_id: 4f3b2a8e-1c2d-4f3a-9f12-6f3d6a0a9c1b
+        queued_for_processing: true
+
+    OutboundValidatedSms:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 format
+        pin:
+          type: string
+          description: User-chosen PIN
+        hash:
+          type: string
+          description: Onboarding hash
+      required: [mobile_number, pin, hash]
+      example:
+        mobile_number: '+9199XXYYZZAA'
+        pin: '123456'
+        hash: 'A3B7K2M9'
+
+    PinSetupRequest:
+      type: object
+      properties:
+        mobile_number:
+          type: string
+          description: E.164 formatted mobile number
+        pin:
+          type: string
+          description: User-chosen PIN
+        hash:
+          type: string
+          description: Hash from onboarding verification
+      required: [mobile_number, pin, hash]
+      example:
+        mobile_number: '+9199XXYYZZAA'
+        pin: '123456'
+        hash: 'A3B7K2M9'
+
+    PinSetupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+      required: [status]
+      example:
+        status: success
+        message: PIN accepted, account creation in progress
+
+    TriggerRecoveryResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        triggered_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+      required: [status]
+      example:
+        status: success
+        triggered_at: '2025-01-15T12:00:00Z'
+        message: Recovery process initiated
+
+paths:
+  /onboarding/register:
+    post:
+      summary: Generate or return onboarding hash for mobile number
+      description: >-
+        Accepts mobile number to generate an onboarding hash. Optional fields: email, device_id.
+        Returns dual time windows: user_deadline (5 min) for user action, and expires_at (24h) for system retention.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardRegisterRequest'
+      responses:
+        '200':
+          description: Hash generated or existing hash returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardHashResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Duplicate mobile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardHashError'
+
+  /health:
+    get:
+      summary: Health status of SMS Bridge
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service degraded or unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /sms/receive:
+    post:
+      summary: Receive webhook from local mobile device for incoming SMS
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SmsReceiveRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                mobile_number:
+                  type: string
+                message:
+                  type: string
+                received_at:
+                  type: string
+                  format: date-time
+              required: [mobile_number, message, received_at]
+      responses:
+        '202':
+          description: Accepted and queued for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmsReceiveResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /outbound/validated-sms:
+    post:
+      summary: Outbound webhook contract for validated user data
+      description: >-
+        External backend should accept this payload when the SMS Bridge forwards
+        validated user data (mobile + PIN + hash) after successful onboarding.
+        Posted to sync_url from settings at sync_interval frequency.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundValidatedSms'
+      responses:
+        '200':
+          description: Accepted
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pin-setup:
+    post:
+      summary: Submit PIN after mobile verification
+      description: >-
+        Called after SMS verification passes. Checks verified:{mobile} exists,
+        validates hash, then pushes to sync_queue (hot path) and audit_buffer (cold path).
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PinSetupRequest'
+      responses:
+        '200':
+          description: PIN accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PinSetupResponse'
+        '400':
+          description: Mobile not verified or hash mismatch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /admin/trigger-recovery:
+    post:
+      summary: Trigger manual recovery sync to backend
+      description: >-
+        Admin endpoint to manually trigger recovery process.
+        Generates HMAC signature and POSTs to recovery_url from settings.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Recovery triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerRecoveryResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Recovery endpoint unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+security:
+  - BearerAuth: []

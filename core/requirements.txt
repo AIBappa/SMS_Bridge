@@ -1,0 +1,44 @@
+# SMS Bridge v2.2 Dependencies
+
+# Core Framework
+fastapi>=0.120.1
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.0.0
+starlette>=0.49.1
+
+# Database
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+
+# Redis
+redis>=5.2
+
+# Admin UI
+sqladmin>=0.15
+itsdangerous>=2.1  # Required for SQLAdmin sessions
+
+# Authentication
+passlib[bcrypt]>=1.7
+bcrypt>=4.0.1,<4.1.0  # Pin bcrypt to avoid passlib compatibility issue with bcrypt>=4.1.0
+
+# HTTP Client (outbound sync_url calls)
+httpx>=0.25
+
+# Environment
+python-dotenv>=1.0
+
+# Background Workers
+apscheduler>=3.10
+
+# Form parsing (SMS webhook)
+python-multipart>=0.0.18
+
+# Templates
+jinja2>=3.1.5  # CVE fixes in 3.1.5+
+
+# Optional: Production
+gunicorn>=21.0
+
+# Optional: Monitoring
+prometheus-client>=0.23
