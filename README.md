@@ -38,58 +38,26 @@ This method can verify mobile numbers via SMS. Users can send SMS to older mobil
 
 ## Deployment
 
-### Using Coolify
-See [coolify/README.md](coolify/README.md) for detailed deployment instructions using Coolify.
+### Production Deployment
 
-### Using Docker Compose
+**Full deployment guide**: See [coolify/README.md](coolify/README.md)
+
+**Quick start:**
 ```bash
-docker-compose -f coolify/docker-compose.yml up -d
+cd coolify
+./setup.sh          # Prepare environment
+nano .env           # Configure secrets
+docker-compose up -d
 ```
 
-## Prerequisites
-
-- Linux laptop (tested on Ubuntu/Debian) or WSL environment
-- Docker and Docker Compose
-- Python 3.9+ (for local development)
-- Git (for cloning)
-
-## Quick Start
-
-### Production Deployment (Coolify/Docker Compose)
-
-1. **Run setup script**: Prepares directories and configuration
-   ```bash
-   cd coolify
-   ./setup.sh
-   ```
-
-2. **Configure environment**: Edit `.env` with your secure credentials
-   ```bash
-   nano .env
-   # IMPORTANT: Set all passwords and secrets (look for CHANGE_ME)
-   ```
-
-3. **Deploy services**:
-   ```bash
-   docker-compose up -d
-   ```
-   
-   Admin user will be **auto-created** on first startup from .env credentials.
-
-4. **Verify deployment**: Check that services are running
-   ```bash
-   docker-compose ps
-   docker-compose logs -f sms_receiver
-   ```
-
-See [coolify/README.md](coolify/README.md) for detailed deployment options and troubleshooting.
+**Deployment options:**
+- **Full Stack**: Deploy everything (PostgreSQL, Redis, monitoring)
+- **Supabase Integration**: Connect to existing Supabase + Dragonfly
 
 ### Local Development
 
-For local testing without full deployment:
-
+For quick local testing:
 ```bash
-# Install Python dependencies
 pip install -r core/requirements.txt
 
 # Set environment variables
@@ -188,4 +156,4 @@ Default service endpoints:
 - [Admin Security Guide](docs/ADMIN_SECURITY.md) - **Important security information for admin users**
 - [Technical Specification](docs/core/SMS_Bridge_tech_spec_v2.2.md)
 - [Monitoring Specification](docs/core/SMS_Bridge_monitoring_spec_v2.2.md)
-- [Coolify Deployment](coolify/README.md) 
+- [Coolify Deployment](coolify/README.md)

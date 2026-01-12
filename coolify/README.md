@@ -1,3 +1,25 @@
+# SMS Bridge - Production Deployment Guide
+
+**This guide covers production deployment via Coolify/Docker Compose.**
+
+For local development, see [main README](../README.md#local-development).
+
+---
+
+## Deployment Options
+
+Choose the deployment that fits your infrastructure:
+
+### Option A: Full Stack Deployment
+Deploy everything including PostgreSQL, Redis, and monitoring.
+👉 [Jump to Full Stack Guide](#quick-start-full-stack)
+
+### Option B: Supabase + Dragonfly Integration
+Connect to existing Supabase (PostgreSQL) and Dragonfly (Redis).
+👉 [Jump to Supabase Integration](#option-a-connect-to-existing-supabase--dragonfly)
+
+---
+
 # SMS Bridge - Coolify Deployment on Hetzner
 
 This folder contains everything needed to deploy SMS Bridge via **Coolify** on your Hetzner VM.
