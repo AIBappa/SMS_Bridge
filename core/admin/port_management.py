@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Port mappings persistent storage
 PORT_MAPPINGS_FILE = Path("/app/logs/port_mappings.json")
 
-# Internal ports are fixed in docker-compose-main.yml
+# Internal ports are fixed in docker-compose.yml
 INTERNAL_PORTS = {
     "metrics": 8080,      # sms_receiver container
     "postgres": 5432,     # postgres container

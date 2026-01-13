@@ -32,7 +32,7 @@ coolify-monitoring/
 - ✓ Data persists in Docker volumes
 - ✓ Simple scripts for common tasks
 
-### 2. Minimal Server Stack (`coolify/docker-compose-main.yml`)
+### 2. Minimal Server Stack (`coolify/docker-compose.yml`)
 
 **Purpose**: Production server with no monitoring containers
 
@@ -139,7 +139,7 @@ monitoring_worker_enabled: bool = True
 1. **On Server** - Deploy with new docker-compose:
    ```bash
    cd coolify
-   docker-compose -f docker-compose-main.yml up -d
+   docker-compose up -d
    ```
 
 2. **Verify Settings** - Check monitoring configuration:

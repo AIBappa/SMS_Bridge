@@ -29,7 +29,7 @@
 - [ ] Pull/copy v2.3 code to server
 - [ ] Verify all new files present:
   ```bash
-  ls -la coolify/docker-compose-main.yml
+  ls -la coolify/docker-compose.yml
   ls -la core/admin/port_management.py
   ls -la core/admin/admin_routes.py
   ls -la core/admin/background_tasks.py
@@ -47,7 +47,7 @@ docker-compose down
 ### Step 2: Start Services
 ```bash
 # Start all services
-docker-compose -f docker-compose-main.yml up -d
+docker-compose up -d
 
 # Wait for services to be ready
 sleep 10
@@ -86,7 +86,7 @@ MONITORING_ENABLED=true
 ### Step 4: Start New Stack
 ```bash
 cd coolify
-docker-compose -f docker-compose-main.yml up -d
+docker-compose up -d
 ```
 
 ### Step 5: Verify Services
@@ -228,7 +228,7 @@ open http://localhost:3000
 **Solution:**
 ```bash
 # Check logs
-docker-compose -f docker-compose-main.yml logs
+docker-compose logs
 
 # Common issues:
 # - Port 8080 already in use
@@ -371,7 +371,7 @@ If issues occur:
 
 ```bash
 # Stop new stack
-docker-compose -f docker-compose-main.yml down
+docker-compose down
 
 # Restore old stack
 docker-compose -f docker-compose.yml.backup up -d
