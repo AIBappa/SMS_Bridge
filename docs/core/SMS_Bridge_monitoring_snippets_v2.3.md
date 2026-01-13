@@ -22,6 +22,8 @@ This document contains all code examples, configuration files, and technical sni
 
 ### 1.1 sms_settings.json (with Monitoring Ports)
 
+**Note:** Only external ports are stored in `sms_settings.json`. Internal ports (8080, 5432, 6379, 6432) are fixed in `docker-compose.yml` and referenced in code constants. The system automatically maps external → internal ports when opening monitoring access.
+
 ```json
 {
   "version": "2.3.0",
@@ -53,26 +55,26 @@ This document contains all code examples, configuration files, and technical sni
     },
     "monitoring_ports": {
       "metrics": {
-        "external_port": 9100,
-        "internal_port": 8080,
+        "port": 9100,
+        "service": "sms_receiver",
         "description": "Prometheus metrics endpoint",
         "enabled": true
       },
       "postgres": {
-        "external_port": 5433,
-        "internal_port": 5432,
+        "port": 5433,
+        "service": "postgres",
         "description": "PostgreSQL database access",
         "enabled": true
       },
       "pgbouncer": {
-        "external_port": 6434,
-        "internal_port": 6432,
+        "port": 6434,
+        "service": "pgbouncer",
         "description": "PgBouncer connection pooler",
         "enabled": false
       },
       "redis": {
-        "external_port": 6380,
-        "internal_port": 6379,
+        "port": 6380,
+        "service": "redis",
         "description": "Redis cache access",
         "enabled": true
       }
@@ -367,33 +369,34 @@ import json
 # Port mappings persistent storage
 PORT_MAPPINGS_FILE = Path("/app/logs/port_mappings.json")
 
-# Service configurations
-MONITORING_SERVICES = {
-    "postgres": {
-        "container": "sms_postgres",
-        "internal_port": 5432,
-        "external_port": 5433,
-        "type": "database"
-    },
-    "pgbouncer": {
-        "container": "sms_pgbouncer",
-        "internal_port": 6432,
-        "external_port": 6434,
-        "type": "database"
-    },
-    "redis": {
-        "container": "sms_redis",
-        "internal_port": 6379,
-        "external_port": 6380,
-        "type": "cache"
-    },
-    "metrics": {
-        "container": "sms_receiver",
-        "internal_port": 8080,
-        "external_port": 9100,
-        "type": "metrics"
-    }
+# Internal ports are fixed in docker-compose.yml
+INTERNAL_PORTS = {
+    "postgres": 5432,
+    "pgbouncer": 6432,
+    "redis": 6379,
+    "metrics": 8080
 }
+
+# Container name mappings
+CONTAINER_NAMES = {
+    "postgres": "sms_postgres",
+    "pgbouncer": "sms_pgbouncer",
+    "redis": "sms_redis",
+    "metrics": "sms_receiver"
+}
+
+SERVICE_TYPES = {
+    "postgres": "database",
+    "pgbouncer": "database",
+    "redis": "cache",
+    "metrics": "metrics"
+}
+
+# External ports come from sms_settings.json (configurable via Admin UI)
+def get_external_port(service: str) -> int:
+    """Get external port for service from sms_settings.json"""
+    config = load_monitoring_config()
+    return config[service]["port"]
 
 def load_port_mappings() -> Dict:
     """Load active port mappings from file"""
@@ -466,7 +469,8 @@ def validate_port_config(config: Dict) -> Tuple[bool, List[str]]:
     used_ports = set()
     
     for service, settings in config.items():
-        external_port = settings.get("external_port")
+        # Only external port is in sms_settings.json
+        external_port = settings.get("port")
         
         # Range check
         if not (1024 <= external_port <= 65535):
@@ -504,14 +508,31 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict
 
+# Internal ports are fixed in docker-compose.yml
+INTERNAL_PORTS = {
+    "metrics": 8080,      # sms_receiver container
+    "postgres": 5432,     # postgres container
+    "pgbouncer": 6432,    # pgbouncer container
+    "redis": 6379         # redis container
+}
+
+CONTAINER_NAMES = {
+    "metrics": "sms_receiver",
+    "postgres": "postgres",
+    "pgbouncer": "pgbouncer",
+    "redis": "redis"
+}
+
 def open_monitoring_port(service: str, duration_minutes: int, username: str) -> Dict:
     """
     Open a monitoring port for external tools
+    - External port comes from sms_settings.json (configurable)
+    - Internal port is fixed based on service type
     - Port is exposed via iptables rule
     - Automatically closes after duration
     - Logs who opened it and when
     """
-    # Load current configuration from sms_settings.json
+    # Load current configuration from sms_settings.json (external ports only)
     config = load_monitoring_config()
     
     if service not in config:
@@ -522,8 +543,12 @@ def open_monitoring_port(service: str, duration_minutes: int, username: str) -> 
     if not service_config["enabled"]:
         raise ValueError(f"Service '{service}' is disabled in configuration")
     
-    external_port = service_config["external_port"]
-    internal_port = service_config["internal_port"]
+    # External port from sms_settings.json (configurable)
+    external_port = service_config["port"]
+    
+    # Internal port is fixed (from docker-compose.yml)
+    internal_port = INTERNAL_PORTS[service]
+    container_name = CONTAINER_NAMES[service]
     
     # Validate port still available
     if not validate_port_available(external_port):
@@ -540,13 +565,13 @@ def open_monitoring_port(service: str, duration_minutes: int, username: str) -> 
         "-j", "ACCEPT"
     ], check=True)
     
-    # Add NAT rule for port forwarding
+    # Add NAT rule for port forwarding (external → internal)
     subprocess.run([
         "iptables", "-t", "nat", "-A", "DOCKER",
         "-p", "tcp",
         "--dport", str(external_port),
         "-j", "DNAT",
-        "--to-destination", f"{MONITORING_SERVICES[service]['container']}:{internal_port}"
+        "--to-destination", f"{container_name}:{internal_port}"
     ], check=True)
     
     now = datetime.now()

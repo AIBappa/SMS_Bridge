@@ -59,6 +59,8 @@ pip install -r requirements.txt
 
 ### sms_settings.json (Unified Configuration)
 
+**Note:** Only external ports are configurable via Admin UI and stored here. Internal ports (8080, 5432, 6379, 6432) are fixed in `docker-compose.yml`.
+
 ```json
 {
   "sms_receiver_number": "+919000000000",
@@ -83,20 +85,28 @@ pip install -r requirements.txt
   },
   "monitoring_ports": {
     "metrics": {
-      "external_port": 8081,
-      "internal_port": 8081
+      "port": 9100,
+      "service": "sms_receiver",
+      "description": "Prometheus metrics endpoint",
+      "enabled": true
     },
     "postgres": {
-      "external_port": 5432,
-      "internal_port": 5432
+      "port": 5433,
+      "service": "postgres",
+      "description": "PostgreSQL database access",
+      "enabled": true
     },
     "pgbouncer": {
-      "external_port": 6432,
-      "internal_port": 6432
+      "port": 6434,
+      "service": "pgbouncer",
+      "description": "PgBouncer connection pooler",
+      "enabled": false
     },
     "redis": {
-      "external_port": 6379,
-      "internal_port": 6379
+      "port": 6380,
+      "service": "redis",
+      "description": "Redis cache access",
+      "enabled": true
     }
   },
   "rate_limits": {
