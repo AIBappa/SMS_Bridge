@@ -30,7 +30,6 @@
 - [ ] Verify all new files present:
   ```bash
   ls -la coolify/docker-compose-main.yml
-  ls -la coolify/init/migration_v2.3_monitoring.sql
   ls -la core/admin/port_management.py
   ls -la core/admin/admin_routes.py
   ls -la core/admin/background_tasks.py
@@ -45,27 +44,16 @@ cd coolify
 docker-compose down
 ```
 
-### Step 2: Run Database Migration
+### Step 2: Start Services
 ```bash
-# Start only postgres
-docker-compose -f docker-compose-main.yml up -d postgres
+# Start all services
+docker-compose -f docker-compose-main.yml up -d
 
-# Wait for postgres to be ready
+# Wait for services to be ready
 sleep 10
 
-# Run migration
-docker exec -i sms_postgres psql -U postgres -d sms_bridge < init/migration_v2.3_monitoring.sql
-
-# Verify migration
-docker exec sms_postgres psql -U postgres -d sms_bridge -c "\dt monitoring_*"
-```
-
-Expected output:
-```
-                  List of relations
- Schema |          Name          | Type  |  Owner   
---------+-------------------------+-------+----------
- public | monitoring_port_access | table | postgres
+# Verify settings loaded
+docker exec sms_receiver cat /app/config/sms_settings.json | grep -A 10 monitoring_ports
 ```
 
 ### Step 3: Update Configuration Files
@@ -181,9 +169,9 @@ sudo iptables -L INPUT -n | grep 9100
 4. Should be automatically closed
 
 ```bash
-# Check database for auto-close event
-docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "SELECT * FROM monitoring_port_access WHERE action = 'expired' ORDER BY created_at DESC LIMIT 1;"
+# Check port mappings file
+docker exec sms_receiver cat /app/logs/port_mappings.json
+# Should show empty or no expired entries
 ```
 
 ## 💻 Laptop Setup
@@ -248,18 +236,17 @@ docker-compose -f docker-compose-main.yml logs
 # - Environment variables missing
 ```
 
-### Issue: Migration fails
+### Issue: Settings not loading
 **Solution:**
 ```bash
-# Check if table already exists
-docker exec sms_postgres psql -U postgres -d sms_bridge -c "\dt"
+# Verify settings file exists and is valid JSON
+docker exec sms_receiver cat /app/config/sms_settings.json | jq .
 
-# If migration partially applied, rollback manually
-docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "DROP TABLE IF EXISTS monitoring_port_access CASCADE;"
+# Check for syntax errors
+docker exec sms_receiver python -c "import json; json.load(open('/app/config/sms_settings.json'))"
 
-# Re-run migration
-docker exec -i sms_postgres psql -U postgres -d sms_bridge < init/migration_v2.3_monitoring.sql
+# Restart service to reload settings
+docker restart sms_receiver
 ```
 
 ### Issue: Ports won't open
@@ -309,18 +296,17 @@ docker logs sms_receiver | grep "Monitoring routes"
 
 ## 📊 Verification Commands
 
-### Database
+### Settings & Configuration
 ```bash
-# Check monitoring tables exist
-docker exec sms_postgres psql -U postgres -d sms_bridge -c "\dt monitoring_*"
+# Check monitoring port configuration
+docker exec sms_receiver cat /app/config/sms_settings.json | jq '.settings.monitoring_ports'
 
-# View currently open ports
-docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "SELECT * FROM monitoring_ports_currently_open;"
+# View currently open ports from memory
+docker exec sms_receiver cat /app/logs/port_mappings.json | jq .
 
-# View recent port access history
+# View settings history in database
 docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "SELECT * FROM monitoring_port_access_history LIMIT 10;"
+  "SELECT version_id, created_at, created_by, is_active FROM settings_history ORDER BY created_at DESC LIMIT 10;"
 ```
 
 ### Logs

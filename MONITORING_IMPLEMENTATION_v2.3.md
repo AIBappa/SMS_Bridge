@@ -77,20 +77,21 @@ GET    /admin/monitoring/logs/list             # List log files
 GET    /admin/monitoring/logs/download/{service}      # Download logs
 ```
 
-### 5. Database Migration (`coolify/init/migration_v2.3_monitoring.sql`)
+### 5. Settings Configuration (`core/config/sms_settings.json`)
 
-**Purpose**: Audit trail for port access
+**Purpose**: Configure monitoring ports and default durations
 
-**Tables & Views**:
-- `monitoring_port_access` - Audit trail
-- `monitoring_ports_currently_open` - Active ports view
-- `monitoring_port_access_history` - Historical view
-- `monitoring_audit_summary` - Summary by date/user
+**Settings**:
+- `monitoring_ports.default_duration_seconds` - Default port open time
+- `monitoring_ports.max_duration_seconds` - Maximum allowed duration
+- `monitoring_ports.auto_close_enabled` - Enable automatic closing
+- `monitoring_ports.{service}.port` - External port numbers
+- `monitoring_ports.{service}.enabled` - Enable/disable service
 
-**Functions**:
-- `record_port_opened()` - Log port opening
-- `record_port_closed()` - Log port closing
-- `find_expired_ports()` - Find expired ports
+**Audit Trail**: All changes tracked in `settings_history` table with:
+- Version ID, timestamp, admin username
+- Complete configuration snapshot (JSONB)
+- Change notes
 
 ### 6. Background Tasks (`core/admin/background_tasks.py`)
 
@@ -98,6 +99,8 @@ GET    /admin/monitoring/logs/download/{service}      # Download logs
 
 **Tasks**:
 - Auto-close expired ports (every 60 seconds)
+- Checks in-memory port mappings
+- Closes ports when duration expires
 - Sync port mappings to database (every 5 minutes)
 - Close all ports on shutdown
 
@@ -139,9 +142,9 @@ monitoring_worker_enabled: bool = True
    docker-compose -f docker-compose-main.yml up -d
    ```
 
-2. **Run Migration** - Add monitoring tables:
+2. **Verify Settings** - Check monitoring configuration:
    ```bash
-   docker exec -i sms_postgres psql -U postgres -d sms_bridge < init/migration_v2.3_monitoring.sql
+   docker exec sms_receiver cat /app/config/sms_settings.json | jq '.settings.monitoring_ports'
    ```
 
 3. **On Laptop** - Setup monitoring:
@@ -266,13 +269,12 @@ docker ps
 # View logs
 docker logs -f sms_receiver
 
-# Check open ports (in database)
-docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "SELECT * FROM monitoring_ports_currently_open;"
+# Check open ports (in-memory)
+docker exec sms_receiver cat /app/logs/port_mappings.json | jq .
 
-# Check audit trail
+# Check settings history
 docker exec sms_postgres psql -U postgres -d sms_bridge -c \
-  "SELECT * FROM monitoring_port_access_history LIMIT 10;"
+  "SELECT version_id, created_at, created_by, is_active FROM settings_history ORDER BY created_at DESC LIMIT 10;"
 ```
 
 ### Laptop Monitoring

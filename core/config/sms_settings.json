@@ -27,6 +27,9 @@
       }
     },
     "monitoring_ports": {
+      "default_duration_seconds": 3600,
+      "max_duration_seconds": 86400,
+      "auto_close_enabled": true,
       "metrics": {
         "port": 9100,
         "service": "sms_receiver",
