@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -50,6 +50,44 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
 )
+
+
+# =============================================================================
+# Security Dependencies
+# =============================================================================
+
+async def verify_sms_api_key(apiKey: Optional[str] = Query(None, description="API key for authentication")):
+    """
+    Validate API key from query parameter for /sms/receive endpoint.
+    Reads expected key from Redis config:current.
+    If sms_receive_api_key is configured in settings, it must match.
+    If not configured, access is allowed (backward compatibility).
+    """
+    config = redis_client.get_config_current()
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not configured"
+        )
+    
+    expected_key = config.get("sms_receive_api_key")
+    
+    # If API key is configured in settings, enforce it
+    if expected_key:
+        if not apiKey:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing apiKey query parameter"
+            )
+        
+        if apiKey != expected_key:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key"
+            )
+    
+    # If not configured, allow access (backward compatibility)
+    return True
 
 
 # =============================================================================
@@ -328,6 +366,7 @@ def register_onboarding(
 def receive_sms(
     request: SMSReceiveRequest,
     db: Session = Depends(get_db),
+    authorized: bool = Depends(verify_sms_api_key),
 ) -> SMSReceiveResponse:
     """
     Receive SMS from gateway or Test Lab.
