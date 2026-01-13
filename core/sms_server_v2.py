@@ -1,5 +1,5 @@
 """
-SMS Bridge v2.2 - Main FastAPI Application
+SMS Bridge v2.3 - Main FastAPI Application
 API endpoints per tech spec Section 4.
 """
 import logging
@@ -66,6 +66,8 @@ async def startup_event():
     4. Restore from power_down_store (if entries exist)
     5. Load blacklist from database
     6. Start background workers
+    7. Setup Admin UI and monitoring routes
+    8. Start monitoring background tasks (v2.3)
     """
     logger.info(f"Starting SMS Bridge v{settings.version}")
     
@@ -125,11 +127,23 @@ async def startup_event():
         setup_admin(app)
         logger.info(f"Admin UI mounted at {settings.admin_path}")
     
-    # 7. Start background workers (if enabled)
+    # 8. Mount monitoring routes (v2.3)
+    if settings.monitoring_enabled:
+        from core.admin.admin_routes import monitoring_router
+        app.include_router(monitoring_router)
+        logger.info("Monitoring routes mounted at /admin/monitoring")
+    
+    # 9. Start background workers (if enabled)
     if settings.sync_worker_enabled or settings.audit_worker_enabled:
         from core.workers import start_workers
         start_workers()
         logger.info("Background workers started")
+    
+    # 10. Start monitoring background tasks (v2.3)
+    if settings.monitoring_worker_enabled:
+        from core.admin.background_tasks import start_background_tasks
+        start_background_tasks(app)
+        logger.info("Monitoring background tasks started")
     
     logger.info("Startup complete")
 
@@ -142,7 +156,8 @@ async def shutdown_event():
     2. Drain sync_queue
     3. Flush audit_buffer to Postgres
     4. Backup Redis keys to power_down_store
-    5. Close connections
+    5. Close monitoring ports (v2.3)
+    6. Close connections
     """
     logger.info("Initiating graceful shutdown")
     
@@ -153,6 +168,19 @@ async def shutdown_event():
         logger.info("Background workers stopped")
     except Exception as e:
         logger.error(f"Error stopping workers: {e}")
+    
+    # Close all open monitoring ports (v2.3)
+    if settings.monitoring_enabled:
+        try:
+            from core.admin.port_management import active_port_mappings, close_monitoring_port
+            for service in list(active_port_mappings.keys()):
+                try:
+                    close_monitoring_port(service, "system-shutdown")
+                    logger.info(f"Closed {service} port on shutdown")
+                except Exception as e:
+                    logger.error(f"Failed to close {service} on shutdown: {e}")
+        except Exception as e:
+            logger.error(f"Error closing monitoring ports: {e}")
     
     # Backup Redis state to Postgres
     try:

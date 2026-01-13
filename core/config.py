@@ -59,7 +59,7 @@ class AppSettings(BaseSettings):
     """
     # Application metadata
     app_name: str = Field(default="sms-bridge", description="Application name")
-    version: str = Field(default="2.2.0", description="Application version")
+    version: str = Field(default="2.3.0", description="Application version")
     debug: bool = Field(default=False, description="Enable debug mode")
     
     # Server settings
@@ -93,9 +93,14 @@ class AppSettings(BaseSettings):
     metrics_enabled: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_path: str = Field(default="/metrics", description="Metrics endpoint path")
     
+    # Monitoring (v2.3)
+    monitoring_enabled: bool = Field(default=True, description="Enable monitoring port management")
+    server_ip: str = Field(default="auto", description="Server IP for monitoring connections")
+    
     # Background workers
     sync_worker_enabled: bool = Field(default=True)
     audit_worker_enabled: bool = Field(default=True)
+    monitoring_worker_enabled: bool = Field(default=True, description="Enable auto-close expired ports task")
     
     # Startup behavior
     load_settings_to_redis: bool = Field(

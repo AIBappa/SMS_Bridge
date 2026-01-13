@@ -1,0 +1,154 @@
+version: "3.8"
+
+# SMS Bridge - Main Server Deployment (Minimal - No Monitoring Stack)
+# For production deployment on Hetzner via Coolify
+
+networks:
+  sms_bridge_network:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+
+services:
+  # ===========================================
+  # Core Database Services
+  # ===========================================
+  
+  postgres:
+    image: postgres:15
+    container_name: sms_postgres
+    restart: unless-stopped
+    networks:
+      - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./init/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./logs/postgres:/var/log/postgresql:rw
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}
+      # Logging configuration
+      POSTGRES_LOGGING_COLLECTOR: "on"
+      POSTGRES_LOG_DIRECTORY: "/var/log/postgresql"
+      POSTGRES_LOG_FILENAME: "postgresql-%Y-%m-%d.log"
+      POSTGRES_LOG_ROTATION_AGE: "1d"
+      POSTGRES_LOG_ROTATION_SIZE: "10MB"
+      POSTGRES_LOG_MIN_DURATION_STATEMENT: "1000"
+      POSTGRES_LOG_LINE_PREFIX: "%t [%p]: [%l-1] user=%u,db=%d "
+      POSTGRES_LOG_STATEMENT: "none"
+      POSTGRES_LOG_MIN_MESSAGES: "WARNING"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sms_bridge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: brainsam/pgbouncer
+    container_name: sms_pgbouncer
+    restart: unless-stopped
+    networks:
+      - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-sms_bridge}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "10"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: sms_redis
+    restart: unless-stopped
+    networks:
+      - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
+    volumes:
+      - redis_data:/data
+      - ./logs/redis:/var/log/redis:rw
+    command: >
+      redis-server 
+      --maxmemory 256mb 
+      --maxclients 1000 
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --loglevel warning
+      --logfile /var/log/redis/redis.log
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Application Service
+  # ===========================================
+
+  sms_receiver:
+    build:
+      context: ..
+      dockerfile: coolify/Dockerfile
+    container_name: sms_receiver
+    restart: unless-stopped
+    networks:
+      - sms_bridge_network
+    ports:
+      # ONLY SMS receiver port exposed (behind Cloudflare)
+      - "${SMS_RECEIVER_PORT:-8080}:8080"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs:rw
+      - ../core/config/sms_settings.json:/app/config/sms_settings.json:rw
+    environment:
+      # Database (via PgBouncer)
+      SMS_BRIDGE_DATABASE__HOST: pgbouncer
+      SMS_BRIDGE_DATABASE__NAME: ${POSTGRES_DB:-sms_bridge}
+      SMS_BRIDGE_DATABASE__USER: ${POSTGRES_USER:-postgres}
+      SMS_BRIDGE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD}
+      SMS_BRIDGE_DATABASE__PORT: "6432"
+      # Redis
+      SMS_BRIDGE_REDIS__HOST: redis
+      SMS_BRIDGE_REDIS__PORT: "6379"
+      SMS_BRIDGE_REDIS__PASSWORD: ${REDIS_PASSWORD}
+      # Admin UI Credentials
+      SMS_BRIDGE_ADMIN_USERNAME: ${SMS_BRIDGE_ADMIN_USERNAME:-admin}
+      SMS_BRIDGE_ADMIN_PASSWORD: ${SMS_BRIDGE_ADMIN_PASSWORD}
+      SMS_BRIDGE_ADMIN_SECRET_KEY: ${SMS_BRIDGE_ADMIN_SECRET_KEY}
+      # Server configuration (for port management)
+      SERVER_IP: ${SERVER_IP:-auto}
+      # Logging (minimal - WARNING level)
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
+      LOG_DIR: /app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Required for iptables management (port opening)
+    cap_add:
+      - NET_ADMIN
+    # Run as root to allow iptables commands (port management)
+    # Security: Only admin users can trigger port opening via authenticated Admin UI
+    privileged: false
