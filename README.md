@@ -32,58 +32,111 @@ This software is an SMS Bridge Consolidator that works on a laptop connected to 
 
 ## Concept
 
-The idea is that older mobiles act as SMS receivers and the laptop aggregates all received SMSes in a PostgreSQL database. Duplicate SMSes are filtered and only unique SMS numbers are forwarded to the cloud database (example uses Cloudflare D1).
+The idea is that older mobiles act as SMS receivers and the laptop aggregates all received SMS messages in a PostgreSQL database. Duplicate SMS messages are filtered and only unique SMS numbers are forwarded to the external backend.
 
-This method can verify mobile numbers that have been written to Cloudflare D1 via IP input. Users can send SMS to older mobile numbers to confirm their mobile numbers after submitting an onboarding application via IP/Ethernet network.
+This method can verify mobile numbers via SMS. Users can send SMS to older mobile numbers to confirm their mobile numbers after submitting an onboarding application via IP/Ethernet network.
 
 ## Deployment
 
-### Using Coolify
-See [coolify/README.md](coolify/README.md) for detailed deployment instructions using Coolify.
+### Production Deployment
 
-### Using Docker Compose
+**Full deployment guide**: See [coolify/README.md](coolify/README.md)
+
+**Quick start:**
 ```bash
-docker-compose -f coolify/docker-compose.yml up -d
+cd coolify
+./setup.sh          # Prepare environment
+nano .env           # Configure secrets
+docker-compose up -d
 ```
 
-## Prerequisites
+**Deployment options:**
+- **Full Stack**: Deploy everything (PostgreSQL, Redis, monitoring)
+- **Supabase Integration**: Connect to existing Supabase + Dragonfly
 
-- Linux laptop (tested on Ubuntu/Debian) or WSL environment
-- Docker and Docker Compose
-- Python 3.9+ (for local development)
-- Git (for cloning)
+### Local Development
 
-## Quick Start
+For quick local testing:
+```bash
+pip install -r core/requirements.txt
 
-1. **Set up configuration**: Copy and customize configuration files
-   ```bash
-   cd coolify
-   cp .env.example .env
-   # Edit .env with your settings
-   # IMPORTANT: Set SMS_BRIDGE_ADMIN_USERNAME and SMS_BRIDGE_ADMIN_PASSWORD
-   ```
+# Set environment variables
+export POSTGRES_HOST=localhost
+export POSTGRES_DB=sms_bridge
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=your_password
+export REDIS_HOST=localhost
+export REDIS_PASSWORD=your_redis_password
 
-2. **Deploy with Docker Compose**:
-   ```bash
-   cd coolify
-   docker-compose up -d
-   ```
-   
-   Admin user will be **auto-created** on first startup from .env credentials.
+# Run the application
+python -m core.sms_server_v2
+```
 
-3. **Verify**: Check that services are running
-   ```bash
-   docker-compose ps
-   ```
-   
-   Login to Admin UI at: http://localhost:8080/admin/
+**Database Setup for Local Development:**
 
-## Service Access
+```bash
+# Create database and run schema
+psql -U postgres -c "CREATE DATABASE sms_bridge;"
+psql -U postgres -d sms_bridge -f coolify/init/schema.sql
+```
+
+**Access Points:**
+- SMS Bridge API: <http://localhost:8080>
+- Health Check: <http://localhost:8080/health>
+- Metrics: <http://localhost:8080/metrics>
+- Admin UI: <http://localhost:8080/admin/>
+
+**Useful Commands:**
+
+```bash
+# View logs
+docker-compose logs -f sms_receiver
+
+# Restart service
+docker-compose restart sms_receiver
+
+# Stop all services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up -d --build sms_receiver
+
+# Database access
+docker-compose exec postgres psql -U postgres -d sms_bridge
+
+# Redis access
+docker-compose exec redis redis-cli -a YOUR_REDIS_PASSWORD
+```
+
+## API Endpoints
+
+### Inbound Endpoints (SMS Bridge receives)
+
+- **POST `http://localhost:8080/onboarding/register`** - Generate or return onboarding hash for mobile number
+- **GET `http://localhost:8080/health`** - Health status of SMS Bridge service
+- **POST `http://localhost:8080/sms/receive`** - Receive webhook from mobile device for incoming SMS data
+  - *This is where the SMS Receiver (mobile) sends received SMS data*
+- **POST `http://localhost:8080/pin-setup`** - Submit PIN after mobile verification
+
+### Admin Endpoints
+
+- **POST `http://localhost:8080/admin/trigger-recovery`** - Trigger manual recovery sync to backend (Admin only)
+
+### Metrics & Monitoring
+
+- **GET `http://localhost:8080/metrics`** - Prometheus metrics endpoint for scraping by Prometheus. This is an internal observability endpoint and is intentionally **not** included in `docs/core/integration_openapi.yaml` because it does not follow the same authentication/usage pattern as the public application API.
+
+### Outbound Webhook Contract (External backend receives)
+
+- **POST `{sync_url_from_settings}`** - Receive validated SMS data in format: `{mobile_number, pin, hash}`
+
+### Service Access
 
 Default service endpoints:
-- **SMS Receiver**: http://localhost:8080
-- **Grafana Dashboard**: http://localhost:3001
-- **Prometheus Metrics**: http://localhost:9090
+- **SMS Bridge API**: <http://localhost:8080>
+- **Grafana Dashboard**: <http://localhost:3001>
+- **Prometheus Metrics**: <http://localhost:9090>
+- **Admin UI**: <http://localhost:8080/admin/>
 
 ## Mobile Setup Required
 
@@ -103,4 +156,4 @@ Default service endpoints:
 - [Admin Security Guide](docs/ADMIN_SECURITY.md) - **Important security information for admin users**
 - [Technical Specification](docs/core/SMS_Bridge_tech_spec_v2.2.md)
 - [Monitoring Specification](docs/core/SMS_Bridge_monitoring_spec_v2.2.md)
-- [Coolify Deployment](coolify/README.md) 
+- [Coolify Deployment](coolify/README.md)

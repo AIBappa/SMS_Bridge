@@ -1,10 +1,86 @@
+# SMS Bridge - Production Deployment Guide
+
+**This guide covers production deployment via Coolify/Docker Compose.**
+
+For local development, see [main README](../README.md#local-development).
+
+---
+
+## Deployment Options
+
+Choose the deployment that fits your infrastructure:
+
+### Option A: Full Stack Deployment
+Deploy everything including PostgreSQL, Redis, and monitoring.
+👉 [Jump to Full Stack Guide](#quick-start-full-stack)
+
+### Option B: Supabase + Dragonfly Integration
+Connect to existing Supabase (PostgreSQL) and Dragonfly (Redis).
+👉 [Jump to Supabase Integration](#option-a-connect-to-existing-supabase--dragonfly)
+
+---
+
 # SMS Bridge - Coolify Deployment on Hetzner
 
 This folder contains everything needed to deploy SMS Bridge via **Coolify** on your Hetzner VM.
 
+## Quick Start (Full Stack)
+
+### Step 1: Run Setup Script
+
+```bash
+cd coolify
+./setup.sh
+```
+
+This script:
+- ✅ Creates `logs/` directory
+- ✅ Verifies configuration files (`config/`, `init/`)
+- ✅ Creates `.env` from `.env.example` if missing
+- ✅ Validates all required files are present
+
+### Step 2: Configure Environment
+
+```bash
+nano .env
+```
+
+**Required settings to change:**
+- `POSTGRES_PASSWORD` - Strong database password
+- `REDIS_PASSWORD` - Strong Redis password
+- `SMS_BRIDGE_ADMIN_USERNAME` - Admin UI username
+- `SMS_BRIDGE_ADMIN_PASSWORD` - Admin UI password (will be auto-hashed)
+- `SMS_BRIDGE_ADMIN_SECRET_KEY` - 32+ character secret key
+- `GRAFANA_ADMIN_PASSWORD` - Grafana admin password
+
+### Step 3: Deploy
+
+```bash
+docker-compose up -d
+```
+
+### Step 4: Verify
+
+```bash
+docker-compose ps
+docker-compose logs -f sms_receiver
+```
+
+**Access points:**
+- SMS Bridge: <http://localhost:8080>
+- Admin UI: <http://localhost:8080/admin/>
+- Grafana: <http://localhost:3001>
+- Prometheus: <http://localhost:9090>
+
+---
+
 ## Deployment Options
 
-### Option A: Existing Supabase + Dragonfly Setup (Recommended)
+### Option A: Full Stack (Above)
+
+Deploys everything: PostgreSQL, Redis, SMS Bridge, Prometheus, Grafana.
+
+### Option B: Existing Supabase + Dragonfly Setup
 
 If you already have **Supabase** (PostgreSQL) and **Dragonfly** (Redis-compatible) running on Hetzner, you only need to deploy the **SMS Receiver Python container**.
 

@@ -135,3 +135,59 @@ class BlacklistMobile(Base):
 
     def __repr__(self):
         return f"<BlacklistMobile(id={self.id}, mobile={self.mobile})>"
+
+
+class MonitoringPortState(Base):
+    """
+    Monitoring Port States (v2.3)
+    Tracks current state of monitoring ports with scheduled auto-close.
+    One row per service (enforced by unique constraint).
+    """
+    __tablename__ = "monitoring_port_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service_name = Column(String(50), unique=True, nullable=False)
+    port = Column(Integer, nullable=False)
+    is_open = Column(Boolean, nullable=False, default=False)
+    opened_at = Column(DateTime)
+    opened_by = Column(String(255))
+    closed_at = Column(DateTime)
+    closed_by = Column(String(255))
+    close_reason = Column(String(50))
+    scheduled_close_at = Column(DateTime)
+    duration_seconds = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_port_states_open", "is_open", "scheduled_close_at", postgresql_where=(is_open == True)),
+    )
+
+    def __repr__(self):
+        return f"<MonitoringPortState(service={self.service_name}, port={self.port}, open={self.is_open})>"
+
+
+class MonitoringPortHistory(Base):
+    """
+    Monitoring Port History (v2.3)
+    Append-only audit log of all port operations.
+    Used for security audit and analytics.
+    """
+    __tablename__ = "monitoring_port_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service_name = Column(String(50), nullable=False)
+    port = Column(Integer, nullable=False)
+    action = Column(String(20), nullable=False)  # 'opened', 'closed'
+    action_by = Column(String(255), nullable=False)
+    reason = Column(String(50))
+    duration_seconds = Column(Integer)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_port_history_service", "service_name", "timestamp"),
+        Index("idx_port_history_timestamp", "timestamp"),
+    )
+
+    def __repr__(self):
+        return f"<MonitoringPortHistory(service={self.service_name}, action={self.action})>"

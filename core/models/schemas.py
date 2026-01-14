@@ -41,6 +41,10 @@ class SettingsPayload(BaseModel):
     allowed_countries: List[str] = Field(default=["+91", "+44"], description="Allowed country codes")
     sync_url: str = Field(..., description="URL for validated user data sync")
     recovery_url: str = Field(..., description="URL for recovery trigger")
+    sms_receive_api_key: Optional[str] = Field(
+        None, 
+        description="API key for /sms/receive webhook. Use in URL: /sms/receive?apiKey=YOUR_KEY"
+    )
     checks: ChecksConfig = Field(default_factory=ChecksConfig)
     secrets: SecretsConfig
 

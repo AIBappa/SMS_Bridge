@@ -267,7 +267,40 @@ def setup_admin(app: FastAPI) -> Admin:
     
     logger.info(f"Admin UI mounted at {settings.admin_path}")
     
+    # Add custom monitoring ports page route
+    setup_monitoring_ports_route(app, settings)
+    
     return admin
+
+
+def setup_monitoring_ports_route(app: FastAPI, settings):
+    """
+    Setup custom route for monitoring ports management page
+    """
+    from fastapi import Request
+    from fastapi.responses import HTMLResponse
+    from starlette.responses import RedirectResponse
+    from pathlib import Path
+    
+    @app.get("/admin/monitoring-ports", response_class=HTMLResponse)
+    async def monitoring_ports_page(request: Request):
+        """Serve the monitoring ports management page"""
+        # Check if user is authenticated
+        if not request.session.get("authenticated"):
+            return RedirectResponse(url=f"{settings.admin_path}/login")
+        
+        # Read and serve the HTML template
+        template_path = Path(__file__).parent.parent / "templates" / "monitoring_ports.html"
+        
+        if not template_path.exists():
+            return HTMLResponse("<h1>Monitoring Ports page not found</h1>", status_code=404)
+        
+        with open(template_path, 'r') as f:
+            html_content = f.read()
+        
+        return HTMLResponse(content=html_content)
+    
+    logger.info("Registered custom route: /admin/monitoring-ports")
 
 
 # =============================================================================

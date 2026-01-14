@@ -9,7 +9,7 @@ info:
     validated user data to an external backend.
 servers:
   - url: https://your-tunnel-domain.com
-    description: Public endpoint (via Cloudflare tunnel)
+    description: Public endpoint
   - url: http://localhost:8080
     description: Local endpoint for on-prem/mobile testing
 components:
@@ -18,6 +18,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: API-Key
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: apiKey
+      description: API key for /sms/receive webhook authentication
   schemas:
     ErrorResponse:
       type: object
@@ -305,8 +310,18 @@ paths:
   /sms/receive:
     post:
       summary: Receive webhook from local mobile device for incoming SMS
+      description: >-
+        Accepts SMS forwarded from mobile device. Requires API key as query parameter.
+        Example: /sms/receive?apiKey=your-secret-key-123
       security:
-        - BearerAuth: []
+        - ApiKeyQuery: []
+      parameters:
+        - name: apiKey
+          in: query
+          required: false
+          schema:
+            type: string
+          description: API key for authentication (required if configured in settings)
       requestBody:
         required: true
         content:

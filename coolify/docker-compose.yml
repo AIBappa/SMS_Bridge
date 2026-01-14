@@ -1,7 +1,7 @@
 version: "3.8"
 
-# SMS Bridge - Coolify Deployment
-# All services for SMS Bridge production deployment on Hetzner via Coolify
+# SMS Bridge - Main Server Deployment (Minimal - No Monitoring Stack)
+# For production deployment on Hetzner via Coolify
 
 networks:
   sms_bridge_network:
@@ -10,8 +10,6 @@ networks:
 volumes:
   pg_data:
   redis_data:
-  grafana_data:
-  prometheus_data:
 
 services:
   # ===========================================
@@ -24,14 +22,27 @@ services:
     restart: unless-stopped
     networks:
       - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./init/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./logs/postgres:/var/log/postgresql:rw
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}
+    command: >
+      postgres
+      -c logging_collector=on
+      -c log_directory=/var/log/postgresql
+      -c log_filename=postgresql-%Y-%m-%d.log
+      -c log_rotation_age=1d
+      -c log_rotation_size=10MB
+      -c log_min_duration_statement=1000
+      -c log_line_prefix='%t [%p]: [%l-1] user=%u,db=%d '
+      -c log_statement=none
+      -c log_min_messages=warning
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sms_bridge}"]
       interval: 10s
@@ -44,6 +55,7 @@ services:
     restart: unless-stopped
     networks:
       - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,14 +80,18 @@ services:
     restart: unless-stopped
     networks:
       - sms_bridge_network
+    # NO PORTS EXPOSED - Internal access only
     volumes:
       - redis_data:/data
+      - ./logs/redis:/var/log/redis:rw
     command: >
       redis-server 
       --maxmemory 256mb 
       --maxclients 1000 
       --requirepass ${REDIS_PASSWORD}
       --appendonly yes
+      --loglevel warning
+      --logfile /var/log/redis/redis.log
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -95,6 +111,7 @@ services:
     networks:
       - sms_bridge_network
     ports:
+      # ONLY SMS receiver port exposed (behind Cloudflare)
       - "${SMS_RECEIVER_PORT:-8080}:8080"
     depends_on:
       pgbouncer:
@@ -103,14 +120,15 @@ services:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs:rw
+      - ../core/config/sms_settings.json:/app/config/sms_settings.json:rw
     environment:
-      # Database (via PgBouncer) - with SMS_BRIDGE_ prefix
+      # Database (via PgBouncer)
       SMS_BRIDGE_DATABASE__HOST: pgbouncer
       SMS_BRIDGE_DATABASE__NAME: ${POSTGRES_DB:-sms_bridge}
       SMS_BRIDGE_DATABASE__USER: ${POSTGRES_USER:-postgres}
       SMS_BRIDGE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD}
       SMS_BRIDGE_DATABASE__PORT: "6432"
-      # Redis - with SMS_BRIDGE_ prefix
+      # Redis
       SMS_BRIDGE_REDIS__HOST: redis
       SMS_BRIDGE_REDIS__PORT: "6379"
       SMS_BRIDGE_REDIS__PASSWORD: ${REDIS_PASSWORD}
@@ -118,8 +136,10 @@ services:
       SMS_BRIDGE_ADMIN_USERNAME: ${SMS_BRIDGE_ADMIN_USERNAME:-admin}
       SMS_BRIDGE_ADMIN_PASSWORD: ${SMS_BRIDGE_ADMIN_PASSWORD}
       SMS_BRIDGE_ADMIN_SECRET_KEY: ${SMS_BRIDGE_ADMIN_SECRET_KEY}
-      # Logging
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Server configuration (for port management)
+      SERVER_IP: ${SERVER_IP:-auto}
+      # Logging (minimal - WARNING level)
+      LOG_LEVEL: ${LOG_LEVEL:-WARNING}
       LOG_DIR: /app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -127,78 +147,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # ===========================================
-  # Monitoring Stack
-  # ===========================================
-
-  prometheus:
-    # Version: 2.48.1 (LTS) - Update version tag when upgrading
-    image: prom/prometheus:v2.48.1
-    container_name: sms_prometheus
-    restart: unless-stopped
-    networks:
-      - sms_bridge_network
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    volumes:
-      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  grafana:
-    # Version: 10.2.3 (Stable) - Update version tag when upgrading
-    image: grafana/grafana:10.2.3
-    container_name: sms_grafana
-    restart: unless-stopped
-    networks:
-      - sms_bridge_network
-    ports:
-      - "${GRAFANA_PORT:-3001}:3000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  postgres_exporter:
-    image: prometheuscommunity/postgres-exporter
-    container_name: sms_postgres_exporter
-    restart: unless-stopped
-    networks:
-      - sms_bridge_network
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sms_bridge}?sslmode=disable"
-
-  redis_exporter:
-    image: oliver006/redis_exporter
-    container_name: sms_redis_exporter
-    restart: unless-stopped
-    networks:
-      - sms_bridge_network
-    depends_on:
-      redis:
-        condition: service_healthy
-    environment:
-      REDIS_ADDR: "redis://redis:6379"
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    # Required for iptables management (port opening)
+    cap_add:
+      - NET_ADMIN
+    # Run as root to allow iptables commands (port management)
+    # Security: Only admin users can trigger port opening via authenticated Admin UI
+    privileged: false

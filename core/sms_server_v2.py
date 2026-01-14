@@ -1,13 +1,14 @@
 """
-SMS Bridge v2.2 - Main FastAPI Application
+SMS Bridge v2.3 - Main FastAPI Application
 API endpoints per tech spec Section 4.
 """
 import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -53,6 +54,44 @@ app = FastAPI(
 
 
 # =============================================================================
+# Security Dependencies
+# =============================================================================
+
+async def verify_sms_api_key(apiKey: Optional[str] = Query(None, description="API key for authentication")):
+    """
+    Validate API key from query parameter for /sms/receive endpoint.
+    Reads expected key from Redis config:current.
+    If sms_receive_api_key is configured in settings, it must match.
+    If not configured, access is allowed (backward compatibility).
+    """
+    config = redis_client.get_config_current()
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not configured"
+        )
+    
+    expected_key = config.get("sms_receive_api_key")
+    
+    # If API key is configured in settings, enforce it
+    if expected_key:
+        if not apiKey:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing apiKey query parameter"
+            )
+        
+        if not secrets.compare_digest(apiKey, expected_key):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key"
+            )
+    
+    # If not configured, allow access (backward compatibility)
+    return True
+
+
+# =============================================================================
 # Startup / Shutdown Events
 # =============================================================================
 
@@ -66,6 +105,8 @@ async def startup_event():
     4. Restore from power_down_store (if entries exist)
     5. Load blacklist from database
     6. Start background workers
+    7. Setup Admin UI and monitoring routes
+    8. Start monitoring background tasks (v2.3)
     """
     logger.info(f"Starting SMS Bridge v{settings.version}")
     
@@ -125,11 +166,26 @@ async def startup_event():
         setup_admin(app)
         logger.info(f"Admin UI mounted at {settings.admin_path}")
     
-    # 7. Start background workers (if enabled)
+    # 8. Mount monitoring routes (v2.3)
+    if settings.monitoring_enabled:
+        from core.admin.admin_routes import monitoring_router
+        app.include_router(monitoring_router)
+        logger.info("Monitoring routes mounted at /admin/monitoring")
+    
+    # 9. Start background workers (if enabled)
     if settings.sync_worker_enabled or settings.audit_worker_enabled:
         from core.workers import start_workers
         start_workers()
         logger.info("Background workers started")
+    
+    # 10. Start monitoring background tasks (v2.3)
+    if settings.monitoring_worker_enabled:
+        import asyncio
+        from core.admin.background_tasks import auto_close_expired_ports_task
+        
+        # Create tasks directly instead of registering event handlers
+        asyncio.create_task(auto_close_expired_ports_task())
+        logger.info("Monitoring background tasks started")
     
     logger.info("Startup complete")
 
@@ -142,7 +198,8 @@ async def shutdown_event():
     2. Drain sync_queue
     3. Flush audit_buffer to Postgres
     4. Backup Redis keys to power_down_store
-    5. Close connections
+    5. Close monitoring ports (v2.3)
+    6. Close connections
     """
     logger.info("Initiating graceful shutdown")
     
@@ -153,6 +210,19 @@ async def shutdown_event():
         logger.info("Background workers stopped")
     except Exception as e:
         logger.error(f"Error stopping workers: {e}")
+    
+    # Close all open monitoring ports (v2.3)
+    if settings.monitoring_enabled:
+        try:
+            from core.admin.port_management import active_port_mappings, close_monitoring_port
+            for service in list(active_port_mappings.keys()):
+                try:
+                    close_monitoring_port(service, "system-shutdown")
+                    logger.info(f"Closed {service} port on shutdown")
+                except Exception as e:
+                    logger.error(f"Failed to close {service} on shutdown: {e}")
+        except Exception as e:
+            logger.error(f"Error closing monitoring ports: {e}")
     
     # Backup Redis state to Postgres
     try:
@@ -300,6 +370,7 @@ def register_onboarding(
 def receive_sms(
     request: SMSReceiveRequest,
     db: Session = Depends(get_db),
+    _authorized: bool = Depends(verify_sms_api_key),
 ) -> SMSReceiveResponse:
     """
     Receive SMS from gateway or Test Lab.

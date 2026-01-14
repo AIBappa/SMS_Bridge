@@ -96,7 +96,7 @@ def stop_workers():
         _worker_status = "stopped"
         logger.info("Background workers stopped")
     except Exception as e:
-        logger.error(f"Error stopping workers: {e}")
+        logger.exception("Error stopping workers")
         _worker_status = "error"
 
 
@@ -144,7 +144,7 @@ def sync_worker():
                 logger.debug(f"Synced item to {sync_url}")
                 
             except httpx.HTTPError as e:
-                logger.error(f"Sync failed for item: {e}")
+                logger.exception("Sync failed for item")
                 # Re-queue on failure (push back to front)
                 # NOTE: Consider implementing retry counter in payload or dead-letter queue
                 # to prevent infinite retry loops if sync_url is permanently unavailable
@@ -153,7 +153,7 @@ def sync_worker():
                 break  # Stop processing on failure
                 
     except Exception as e:
-        logger.error(f"Sync worker error: {e}")
+        logger.exception("Sync worker error")
         _worker_status = "degraded"
     
     if processed > 0 or failed > 0:
@@ -199,7 +199,7 @@ def flush_audit_buffer():
         logger.info(f"Audit worker: flushed {len(events)} events to database")
         
     except Exception as e:
-        logger.error(f"Audit worker error: {e}")
+        logger.exception("Audit worker error")
 
 
 def drain_sync_queue():
@@ -232,7 +232,7 @@ def drain_sync_queue():
             except httpx.HTTPError as e:
                 # Re-queue and stop draining
                 redis_client.lpush_sync_queue(item)
-                logger.error(f"Drain failed: {e}")
+                logger.exception("Drain failed")
                 break
     
     logger.info(f"Drain complete: processed {processed} items")
@@ -300,7 +300,7 @@ class FallbackWorker:
             logger.info(f"Fallback: wrote backup_user for {mobile[-4:]}")
             
         except Exception as e:
-            logger.error(f"Fallback write failed: {e}")
+            logger.exception("Fallback write failed")
 
 
 # Global fallback worker instance
