@@ -189,12 +189,6 @@ async def port_history_endpoint(
     except Exception as e:
         logger.error(f"Failed to get port history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    """
-    try:
-        return get_active_ports()
-    except Exception as e:
-        logger.error(f"Failed to get port status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @monitoring_router.post("/open-all")
