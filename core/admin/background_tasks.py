@@ -15,28 +15,31 @@ _background_tasks: list = []
 async def auto_close_expired_ports_task():
     """
     Background task that runs every minute to close expired monitoring ports
+    Uses database to track port state and expiration
     
     This task:
     1. Checks for expired ports every 60 seconds
     2. Closes any ports that have exceeded their duration
     3. Logs all auto-close actions
     """
-    from core.admin.port_management import close_expired_ports
+    from core.admin.port_management import close_expired_ports_db
+    from core.database import get_db_context
     
-    logger.info("Starting auto-close expired ports task")
+    logger.info("Starting auto-close expired ports task (database-backed)")
     
     while True:
         try:
             # Wait 60 seconds between checks
             await asyncio.sleep(60)
             
-            # Close expired ports
-            closed = close_expired_ports()
-            
-            if closed:
-                logger.warning(
-                    f"AUTO-CLOSE: Closed {len(closed)} expired port(s): {', '.join(closed)}"
-                )
+            # Close expired ports using database
+            with get_db_context() as db:
+                closed = close_expired_ports_db(db)
+                
+                if closed:
+                    logger.warning(
+                        f"AUTO-CLOSE: Closed {len(closed)} expired port(s): {', '.join(closed)}"
+                    )
             
         except Exception as e:
             logger.error(f"Error in auto-close task: {e}")

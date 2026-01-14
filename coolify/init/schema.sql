@@ -135,7 +135,77 @@ CREATE TABLE IF NOT EXISTS blacklist_mobiles (
 CREATE INDEX IF NOT EXISTS idx_blacklist_mobile ON blacklist_mobiles(mobile);
 
 -- =====================================================
--- ARCHITECTURE NOTES (v2.2)
+-- 7. Monitoring Port States (v2.3)
+-- =====================================================
+-- Tracks current state of monitoring ports with scheduled auto-close
+-- One row per service (enforced by unique constraint)
+
+CREATE TABLE IF NOT EXISTS monitoring_port_states (
+    id SERIAL PRIMARY KEY,
+    service_name VARCHAR(50) NOT NULL,
+    port INTEGER NOT NULL,
+    is_open BOOLEAN NOT NULL DEFAULT FALSE,
+    opened_at TIMESTAMPTZ,
+    opened_by VARCHAR(255),
+    closed_at TIMESTAMPTZ,
+    closed_by VARCHAR(255),
+    close_reason VARCHAR(50),
+    scheduled_close_at TIMESTAMPTZ,
+    duration_seconds INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    CONSTRAINT unique_service UNIQUE(service_name)
+);
+
+-- Index for querying open ports
+CREATE INDEX IF NOT EXISTS idx_port_states_open 
+    ON monitoring_port_states(is_open, scheduled_close_at) 
+    WHERE is_open = TRUE;
+
+-- =====================================================
+-- 8. Monitoring Port History (v2.3)
+-- =====================================================
+-- Append-only log of all port operations
+-- Used for audit trail and analytics
+
+CREATE TABLE IF NOT EXISTS monitoring_port_history (
+    id SERIAL PRIMARY KEY,
+    service_name VARCHAR(50) NOT NULL,
+    port INTEGER NOT NULL,
+    action VARCHAR(20) NOT NULL,  -- 'opened', 'closed'
+    action_by VARCHAR(255) NOT NULL,
+    reason VARCHAR(50),
+    duration_seconds INTEGER,
+    timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Indexes for efficient history queries
+CREATE INDEX IF NOT EXISTS idx_port_history_service 
+    ON monitoring_port_history(service_name, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_port_history_timestamp 
+    ON monitoring_port_history(timestamp DESC);
+
+-- Initialize with default services (all closed)
+INSERT INTO monitoring_port_states (service_name, port, is_open) 
+VALUES 
+    ('metrics', 9100, false),
+    ('postgres', 5433, false),
+    ('pgbouncer', 6434, false),
+    ('redis', 6380, false)
+ON CONFLICT (service_name) DO NOTHING;
+
+-- Log initialization
+INSERT INTO monitoring_port_history (service_name, port, action, action_by, reason)
+VALUES 
+    ('metrics', 9100, 'closed', 'system', 'initialization'),
+    ('postgres', 5433, 'closed', 'system', 'initialization'),
+    ('pgbouncer', 6434, 'closed', 'system', 'initialization'),
+    ('redis', 6380, 'closed', 'system', 'initialization');
+
+-- =====================================================
+-- ARCHITECTURE NOTES (v2.3)
 -- =====================================================
 -- 
 -- HOT PATH (Redis only, no SQL):

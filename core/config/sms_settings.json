@@ -30,29 +30,27 @@
       "default_duration_seconds": 3600,
       "max_duration_seconds": 86400,
       "auto_close_enabled": true,
-      "metrics": {
-        "port": 9100,
-        "service": "sms_receiver",
-        "description": "Prometheus metrics endpoint",
-        "enabled": true
-      },
-      "postgres": {
-        "port": 5433,
-        "service": "postgres",
-        "description": "PostgreSQL database access",
-        "enabled": true
-      },
-      "pgbouncer": {
-        "port": 6434,
-        "service": "pgbouncer",
-        "description": "PgBouncer connection pooler",
-        "enabled": false
-      },
-      "redis": {
-        "port": 6380,
-        "service": "redis",
-        "description": "Redis cache access",
-        "enabled": true
+      "available_services": {
+        "metrics": {
+          "port": 9100,
+          "service": "sms_receiver",
+          "description": "Prometheus metrics endpoint"
+        },
+        "postgres": {
+          "port": 5433,
+          "service": "postgres",
+          "description": "PostgreSQL database access"
+        },
+        "pgbouncer": {
+          "port": 6434,
+          "service": "pgbouncer",
+          "description": "PgBouncer connection pooler"
+        },
+        "redis": {
+          "port": 6380,
+          "service": "redis",
+          "description": "Redis cache access"
+        }
       }
     }
   }

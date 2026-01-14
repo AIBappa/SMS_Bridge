@@ -1,25 +1,25 @@
 """
 SMS Bridge v2.3 - Admin Routes for Monitoring
-API endpoints for port management and monitoring configuration
+API endpoints for database-backed port management and monitoring configuration
 """
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from core.database import get_db
 from core.admin.port_management import (
-    close_monitoring_port,
-    get_active_ports,
     load_monitoring_config,
-    open_monitoring_port,
-    save_monitoring_config,
-    scan_available_ports,
-    validate_port_config,
+    open_monitoring_port_db,
+    close_monitoring_port_db,
+    get_port_states_db,
+    get_port_history_db,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,13 +34,7 @@ monitoring_router = APIRouter(prefix="/admin/monitoring", tags=["monitoring"])
 
 class OpenPortRequest(BaseModel):
     """Request to open a monitoring port"""
-    service: str = Field(..., description="Service name (metrics, postgres, redis, pgbouncer)")
-    duration_minutes: int = Field(60, ge=15, le=240, description="Duration in minutes (15-240)")
-
-
-class PortConfigUpdate(BaseModel):
-    """Request to update port configuration"""
-    config: Dict[str, Dict] = Field(..., description="Complete monitoring port configuration")
+    duration_seconds: int = Field(3600, ge=900, le=86400, description="Duration in seconds (15min-24h)")
 
 
 class ClosePortRequest(BaseModel):
@@ -49,26 +43,26 @@ class ClosePortRequest(BaseModel):
 
 
 # =============================================================================
-# Monitoring Service Endpoints
+# Monitoring Service Endpoints (Database-Backed)
 # =============================================================================
 
 @monitoring_router.get("/services")
-async def list_monitoring_services(request: Request):
+async def list_monitoring_services(request: Request, db: Session = Depends(get_db)):
     """
-    List all available monitoring services and their current status
+    List all available monitoring services and their current status from database
     
     Returns:
         - Service configuration from sms_settings.json
-        - Currently active ports
+        - Current state from database
         - Time remaining for each active port
     """
     try:
         config = load_monitoring_config()
-        active = get_active_ports()
+        states = get_port_states_db(db)
         
         return {
-            "services": config,
-            "active_ports": active,
+            "config": config,
+            "states": states,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -76,14 +70,19 @@ async def list_monitoring_services(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@monitoring_router.post("/open-port")
-async def open_port_endpoint(request: Request, body: OpenPortRequest):
+@monitoring_router.post("/ports/{service_name}/open")
+async def open_port_endpoint(
+    request: Request, 
+    service_name: str,
+    body: OpenPortRequest,
+    db: Session = Depends(get_db)
+):
     """
     Open a monitoring port for external access
     
     Args:
-        service: Service name (metrics, postgres, redis, pgbouncer)
-        duration_minutes: How long to keep port open (15-240 minutes)
+        service_name: Service name (metrics, postgres, redis, pgbouncer)
+        duration_seconds: How long to keep port open (900-86400 seconds / 15min-24h)
     
     Returns:
         Port number, connection details, expiration time
@@ -97,10 +96,11 @@ async def open_port_endpoint(request: Request, body: OpenPortRequest):
     username = request.session.get("username", "unknown")
     
     try:
-        result = open_monitoring_port(
-            service=body.service,
-            duration_minutes=body.duration_minutes,
-            username=username
+        result = open_monitoring_port_db(
+            db=db,
+            service_name=service_name,
+            username=username,
+            duration_seconds=body.duration_seconds
         )
         return result
     except ValueError as e:
@@ -110,13 +110,17 @@ async def open_port_endpoint(request: Request, body: OpenPortRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@monitoring_router.post("/close-port")
-async def close_port_endpoint(request: Request, body: ClosePortRequest):
+@monitoring_router.post("/ports/{service_name}/close")
+async def close_port_endpoint(
+    request: Request,
+    service_name: str,
+    db: Session = Depends(get_db)
+):
     """
     Close an open monitoring port
     
     Args:
-        service: Service name to close
+        service_name: Service name to close
         
     Returns:
         Confirmation of closure
@@ -128,9 +132,11 @@ async def close_port_endpoint(request: Request, body: ClosePortRequest):
     username = request.session.get("username", "unknown")
     
     try:
-        result = close_monitoring_port(
-            service=body.service,
-            username=username
+        result = close_monitoring_port_db(
+            db=db,
+            service_name=service_name,
+            username=username,
+            reason='manual'
         )
         return result
     except Exception as e:
@@ -138,16 +144,51 @@ async def close_port_endpoint(request: Request, body: ClosePortRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@monitoring_router.get("/port-status")
-async def port_status_endpoint(request: Request):
+@monitoring_router.get("/port-states")
+async def port_states_endpoint(request: Request, db: Session = Depends(get_db)):
     """
-    Get status of all monitoring ports
+    Get current state of all monitoring ports from database
     
     Returns:
-        Currently open ports with time remaining
+        List of all ports with their current state
+    """
+    try:
+        states = get_port_states_db(db)
+        return {
+            "states": states,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to get port states: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@monitoring_router.get("/port-history")
+async def port_history_endpoint(
+    request: Request,
+    service_name: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    Get history of port operations from database
+    
+    Args:
+        service_name: Filter by service (optional)
+        limit: Max number of records to return
         
-    Note:
-        Automatically closes expired ports
+    Returns:
+        List of historical port operations
+    """
+    try:
+        history = get_port_history_db(db, service_name, limit)
+        return {
+            "history": history,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to get port history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     """
     try:
         return get_active_ports()
