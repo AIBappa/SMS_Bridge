@@ -181,11 +181,10 @@ async def startup_event():
     # 10. Start monitoring background tasks (v2.3)
     if settings.monitoring_worker_enabled:
         import asyncio
-        from core.admin.background_tasks import auto_close_expired_ports_task, sync_port_mappings_to_database_task
+        from core.admin.background_tasks import auto_close_expired_ports_task
         
         # Create tasks directly instead of registering event handlers
         asyncio.create_task(auto_close_expired_ports_task())
-        asyncio.create_task(sync_port_mappings_to_database_task())
         logger.info("Monitoring background tasks started")
     
     logger.info("Startup complete")
