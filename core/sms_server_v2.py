@@ -3,6 +3,7 @@ SMS Bridge v2.3 - Main FastAPI Application
 API endpoints per tech spec Section 4.
 """
 import logging
+import secrets
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -80,7 +81,7 @@ async def verify_sms_api_key(apiKey: Optional[str] = Query(None, description="AP
                 detail="Missing apiKey query parameter"
             )
         
-        if apiKey != expected_key:
+        if not secrets.compare_digest(apiKey, expected_key):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API key"
@@ -179,8 +180,12 @@ async def startup_event():
     
     # 10. Start monitoring background tasks (v2.3)
     if settings.monitoring_worker_enabled:
-        from core.admin.background_tasks import start_background_tasks
-        start_background_tasks(app)
+        import asyncio
+        from core.admin.background_tasks import auto_close_expired_ports_task, sync_port_mappings_to_database_task
+        
+        # Create tasks directly instead of registering event handlers
+        asyncio.create_task(auto_close_expired_ports_task())
+        asyncio.create_task(sync_port_mappings_to_database_task())
         logger.info("Monitoring background tasks started")
     
     logger.info("Startup complete")
@@ -366,7 +371,7 @@ def register_onboarding(
 def receive_sms(
     request: SMSReceiveRequest,
     db: Session = Depends(get_db),
-    authorized: bool = Depends(verify_sms_api_key),
+    _authorized: bool = Depends(verify_sms_api_key),
 ) -> SMSReceiveResponse:
     """
     Receive SMS from gateway or Test Lab.

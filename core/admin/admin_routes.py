@@ -6,7 +6,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, FileResponse

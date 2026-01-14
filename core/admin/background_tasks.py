@@ -4,9 +4,12 @@ Periodic tasks for monitoring port management and system maintenance
 """
 import asyncio
 import logging
-from datetime import datetime
+
 
 logger = logging.getLogger(__name__)
+
+# Module-level variable to track background tasks
+_background_tasks: list = []
 
 
 async def auto_close_expired_ports_task():
@@ -47,17 +50,27 @@ def start_background_tasks(app):
     
     Called from main application startup
     """
+    
     @app.on_event("startup")
-    async def startup_tasks():
+    async def startup_tasks() -> None:
         """Start background tasks on application startup"""
         # Start auto-close task
-        asyncio.create_task(auto_close_expired_ports_task())
+        task = asyncio.create_task(auto_close_expired_ports_task())
+        _background_tasks.append(task)
         logger.info("✓ Started auto-close expired ports task")
     
     @app.on_event("shutdown")
-    async def shutdown_tasks():
+    async def shutdown_tasks() -> None:
         """Cleanup on application shutdown"""
         logger.info("Shutting down background tasks...")
+        
+        # Cancel background tasks gracefully
+        for task in _background_tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         
         # Close all open ports on shutdown (optional - for security)
         try:

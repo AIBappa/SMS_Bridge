@@ -9,7 +9,7 @@ import socket
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,10 @@ def save_monitoring_config(monitoring_ports: Dict):
     """Save monitoring port configuration to sms_settings.json"""
     try:
         settings_file = Path("/app/config/sms_settings.json")
+        temp_file = settings_file.with_suffix('.json.tmp')
+        
+        # Ensure config directory exists
+        settings_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Read existing config
         with open(settings_file) as f:
@@ -110,13 +114,16 @@ def save_monitoring_config(monitoring_ports: Dict):
             config["settings"] = {}
         config["settings"]["monitoring_ports"] = monitoring_ports
         
-        # Write back
-        with open(settings_file, "w") as f:
+        # Write to temp file first
+        with open(temp_file, "w") as f:
             json.dump(config, f, indent=2)
+        
+        # Atomic rename
+        temp_file.replace(settings_file)
         
         logger.info("Monitoring port configuration saved")
     except Exception as e:
-        logger.error(f"Failed to save monitoring config: {e}")
+        logger.exception("Failed to save monitoring config")
         raise
 
 
@@ -280,19 +287,38 @@ def open_monitoring_port(service: str, duration_minutes: int, username: str) -> 
     # Get server IP
     server_ip = get_server_ip()
     
-    # Add iptables rule to accept traffic on external port
+    # Add iptables rules to forward traffic to container
     try:
+        # Get container IP address
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name],
+            capture_output=True, text=True, check=True
+        )
+        container_ip = result.stdout.strip()
+        
+        if not container_ip:
+            raise ValueError(f"Could not determine IP for container {container_name}")
+        
+        # Add DNAT rule to forward external port to container's internal port
         subprocess.run([
-            "iptables", "-A", "INPUT",
+            "iptables", "-t", "nat", "-A", "PREROUTING",
+            "-p", "tcp", "--dport", str(external_port),
+            "-j", "DNAT", "--to-destination", f"{container_ip}:{internal_port}"
+        ], check=True, capture_output=True)
+        
+        # Add FORWARD rule to allow forwarded traffic
+        subprocess.run([
+            "iptables", "-A", "FORWARD",
             "-p", "tcp",
-            "--dport", str(external_port),
+            "-d", container_ip,
+            "--dport", str(internal_port),
             "-j", "ACCEPT"
         ], check=True, capture_output=True)
         
-        logger.info(f"Added iptables INPUT rule for port {external_port}")
+        logger.info(f"Added iptables rules for port {external_port} -> {container_ip}:{internal_port}")
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to add iptables INPUT rule: {e}")
-        raise ValueError(f"Failed to open port: {e}")
+        logger.exception(f"Failed to add iptables rules: {e}")
+        raise ValueError(f"Failed to open port: {e}") from e
     
     now = datetime.now()
     expires_at = now + timedelta(minutes=duration_minutes)
@@ -338,19 +364,38 @@ def close_monitoring_port(service: str, username: str) -> Dict:
     
     mapping = active_port_mappings[service]
     external_port = mapping["external_port"]
+    internal_port = mapping["internal_port"]
+    container_name = mapping["container"]
     
     # Remove iptables rules
     try:
-        subprocess.run([
-            "iptables", "-D", "INPUT",
-            "-p", "tcp",
-            "--dport", str(external_port),
-            "-j", "ACCEPT"
-        ], check=False, capture_output=True)
+        # Get container IP address
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}", container_name],
+            capture_output=True, text=True, check=False
+        )
+        container_ip = result.stdout.strip()
         
-        logger.info(f"Removed iptables INPUT rule for port {external_port}")
+        if container_ip:
+            # Remove FORWARD rule
+            subprocess.run([
+                "iptables", "-D", "FORWARD",
+                "-p", "tcp",
+                "-d", container_ip,
+                "--dport", str(internal_port),
+                "-j", "ACCEPT"
+            ], check=False, capture_output=True)
+            
+            # Remove DNAT rule
+            subprocess.run([
+                "iptables", "-t", "nat", "-D", "PREROUTING",
+                "-p", "tcp", "--dport", str(external_port),
+                "-j", "DNAT", "--to-destination", f"{container_ip}:{internal_port}"
+            ], check=False, capture_output=True)
+        
+        logger.info(f"Removed iptables rules for port {external_port}")
     except Exception as e:
-        logger.error(f"Failed to remove iptables rule: {e}")
+        logger.exception(f"Failed to remove iptables rules: {e}")
     
     # Log the action
     logger.warning(
@@ -400,18 +445,8 @@ def generate_connection_string(service: str, port: int, server_ip: str) -> Dict:
 
 
 def get_active_ports() -> Dict:
-    """Get all currently active port mappings"""
-    # Clean up expired ports
+    """Get all currently active port mappings (read-only)"""
     now = datetime.now()
-    expired = [
-        service for service, data in active_port_mappings.items()
-        if data["expires_at"] < now
-    ]
-    
-    for service in expired:
-        logger.info(f"Auto-closing expired port for service: {service}")
-        close_monitoring_port(service, "system")
-    
     return {
         service: {
             "port": data["external_port"],
@@ -419,7 +454,8 @@ def get_active_ports() -> Dict:
             "expires_at": data["expires_at"].isoformat(),
             "opened_by": data["opened_by"],
             "time_remaining": str(data["expires_at"] - now),
-            "connection_info": data["connection_info"]
+            "connection_info": data["connection_info"],
+            "expired": data["expires_at"] < now
         }
         for service, data in active_port_mappings.items()
     }
@@ -436,6 +472,7 @@ def close_expired_ports() -> List[str]:
     closed = []
     for service in expired:
         try:
+            logger.info("Auto-closing expired port for service: %s", service)
             close_monitoring_port(service, "system-auto-close")
             closed.append(service)
         except Exception as e:

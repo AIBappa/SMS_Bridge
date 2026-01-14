@@ -32,16 +32,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-sms_bridge}
-      # Logging configuration
-      POSTGRES_LOGGING_COLLECTOR: "on"
-      POSTGRES_LOG_DIRECTORY: "/var/log/postgresql"
-      POSTGRES_LOG_FILENAME: "postgresql-%Y-%m-%d.log"
-      POSTGRES_LOG_ROTATION_AGE: "1d"
-      POSTGRES_LOG_ROTATION_SIZE: "10MB"
-      POSTGRES_LOG_MIN_DURATION_STATEMENT: "1000"
-      POSTGRES_LOG_LINE_PREFIX: "%t [%p]: [%l-1] user=%u,db=%d "
-      POSTGRES_LOG_STATEMENT: "none"
-      POSTGRES_LOG_MIN_MESSAGES: "WARNING"
+    command: >
+      postgres
+      -c logging_collector=on
+      -c log_directory=/var/log/postgresql
+      -c log_filename=postgresql-%Y-%m-%d.log
+      -c log_rotation_age=1d
+      -c log_rotation_size=10MB
+      -c log_min_duration_statement=1000
+      -c log_line_prefix='%t [%p]: [%l-1] user=%u,db=%d '
+      -c log_statement=none
+      -c log_min_messages=warning
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sms_bridge}"]
       interval: 10s
