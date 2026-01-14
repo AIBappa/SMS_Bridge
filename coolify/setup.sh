@@ -79,32 +79,22 @@ fi
 print_success "Found init/ directory with SQL schema files"
 
 # ===========================================
-# Step 2: Verify Configuration Files
+# Step 2: Verify Configuration Directory
 # ===========================================
 echo ""
-echo "Step 2: Verifying configuration files..."
+echo "Step 2: Verifying configuration directory..."
 
-# Check if config files exist
-REQUIRED_CONFIG_FILES=(
-    "config/prometheus.yml"
-    "config/grafana/provisioning/datasources/prometheus.yml"
-    "config/grafana/provisioning/dashboards/dashboards.yml"
-)
-
-CONFIG_OK=true
-for file in "${REQUIRED_CONFIG_FILES[@]}"; do
-    if [ -f "$file" ]; then
-        print_success "Found $file"
-    else
-        print_error "Missing $file (should be in git)"
-        CONFIG_OK=false
-    fi
-done
-
-if [ "$CONFIG_OK" = false ]; then
-    print_error "Some configuration files are missing. Please ensure git repository is complete."
-    exit 1
+# Verify config directories exist (minimal check - no monitoring services in main deployment)
+if [ ! -d "config" ]; then
+    mkdir -p config
+    chmod 755 config
+    print_success "Created config/ directory"
+else
+    print_success "Found config/ directory"
 fi
+
+# Note: This deployment does NOT include Prometheus/Grafana
+# For monitoring, use the separate coolify-monitoring setup
 
 # ===========================================
 # Step 3: Create .env File if Missing
@@ -223,8 +213,10 @@ if [ "$ALL_OK" = true ]; then
     echo "5. ${YELLOW}Access services:${NC}"
     echo "   - SMS Bridge: http://localhost:8080"
     echo "   - Admin UI: http://localhost:8080/admin/"
-    echo "   - Grafana: http://localhost:3001"
-    echo "   - Prometheus: http://localhost:9090"
+    echo ""
+    echo "6. ${YELLOW}For monitoring (optional):${NC}"
+    echo "   - Use the coolify-monitoring setup for Prometheus/Grafana"
+    echo "   - See coolify-monitoring/README.md for details"
     echo ""
 else
     print_error "Setup incomplete. Please check errors above."
