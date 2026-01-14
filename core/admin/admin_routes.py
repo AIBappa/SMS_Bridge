@@ -42,6 +42,11 @@ class ClosePortRequest(BaseModel):
     service: str = Field(..., description="Service name to close")
 
 
+class PortConfigUpdate(BaseModel):
+    """Request to update port configuration"""
+    config: Dict = Field(..., description="Complete monitoring configuration")
+
+
 # =============================================================================
 # Monitoring Service Endpoints (Database-Backed)
 # =============================================================================

@@ -1,7 +1,7 @@
 #!/bin/bash
-SMS Bridge - Coolify Deployment Setup Script
-Creates necessary directories and verifies configuration files
-SQL schema files already exist in init/ directory and are NOT modified
+# SMS Bridge - Coolify Deployment Setup Script
+# Creates necessary directories and verifies configuration files
+# SQL schema files already exist in init/ directory and are NOT modified
 
 set -e # Exit on error
 
@@ -12,14 +12,14 @@ echo "=========================================="
 echo "SMS Bridge - Coolify Setup"
 echo "=========================================="
 echo ""
-Color codes for output
+# Color codes for output
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
-Function to print colored output
+# Function to print colored output
 
 print_success() {
 echo -e "${GREEN}✓${NC} $1"
@@ -34,24 +34,63 @@ echo -e "${RED}✗${NC} $1"
 }
 
 print_info() {
-echo -e "${BLUE}ℹ${NC} $1"
+    echo -e "${BLUE}ℹ${NC} $1"
 }
-===========================================
-Step 1: Create Directory Structure
-===========================================
+# ===========================================
+# Step 1: Create Directory Structure
+# ===========================================
 
 echo "Step 1: Creating directory structure..."
-Create logs directory
+# Create logs directory and subdirectories for postgres and redis
 
 if [ ! -d "logs" ]; then
-mkdir -p logs
-chmod 755 logs
-print_success "Created logs/ directory"
+    mkdir -p logs
+    chmod 755 logs
+    print_success "Created logs/ directory"
 else
-print_warning "logs/ directory already exists"
+    print_warning "logs/ directory already exists"
 fi
-Verify config directories exist (look in coolify/ first, then core/)
-Prefer using existing core/config if present instead of creating a new config/ in coolify/
+
+# Create postgres logs subdirectory with correct ownership
+# NOTE: This is required on Linux/macOS. Windows Docker Desktop handles permissions automatically.
+if [ ! -d "logs/postgres" ]; then
+    mkdir -p logs/postgres
+    print_success "Created logs/postgres/ directory"
+else
+    print_warning "logs/postgres/ directory already exists"
+fi
+
+# Try to set correct ownership (UID 999 = postgres user in container)
+if command -v sudo &> /dev/null && [ "$OSTYPE" != "msys" ] && [ "$OSTYPE" != "win32" ]; then
+    sudo chown -R 999:999 logs/postgres 2>/dev/null && \
+        print_success "Set postgres log directory ownership (UID 999)" || \
+        print_warning "Could not set postgres log ownership. Run manually: sudo chown -R 999:999 logs/postgres"
+elif [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "win32" ]; then
+    print_info "Windows detected - Docker Desktop will handle permissions automatically"
+else
+    print_warning "Cannot set ownership (sudo not available). If on Linux, run: sudo chown -R 999:999 logs/postgres"
+fi
+
+# Create redis logs subdirectory with correct ownership
+if [ ! -d "logs/redis" ]; then
+    mkdir -p logs/redis
+    print_success "Created logs/redis/ directory"
+else
+    print_warning "logs/redis/ directory already exists"
+fi
+
+# Try to set correct ownership (UID 999 = redis user in container)
+if command -v sudo &> /dev/null && [ "$OSTYPE" != "msys" ] && [ "$OSTYPE" != "win32" ]; then
+    sudo chown -R 999:999 logs/redis 2>/dev/null && \
+        print_success "Set redis log directory ownership (UID 999)" || \
+        print_warning "Could not set redis log ownership. Run manually: sudo chown -R 999:999 logs/redis"
+elif [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "win32" ]; then
+    print_info "Windows detected - Docker Desktop will handle permissions automatically"
+else
+    print_warning "Cannot set ownership (sudo not available). If on Linux, run: sudo chown -R 999:999 logs/redis"
+fi
+# Verify config directories exist (look in coolify/ first, then core/)
+# Prefer using existing core/config if present instead of creating a new config/ in coolify/
 
 CONFIG_PATH=""
 if [ -d "config" ]; then
@@ -64,31 +103,31 @@ else
 print_error "config/ directory missing in both coolify/ and core/! This should be in git."
 exit 1
 fi
-Verify init directory and SQL files exist
+# Verify init directory and SQL files exist
 
 if [ ! -d "init" ]; then
-print_error "init/ directory missing! This should be in git."
-exit 1
+    print_error "init/ directory missing! This should be in git."
+    exit 1
 fi
 
 if [ ! -f "init/init.sql" ]; then
-print_error "init/init.sql missing! This should be in git."
-exit 1
+    print_error "init/init.sql missing! This should be in git."
+    exit 1
 fi
 
 if [ ! -f "init/schema.sql" ]; then
-print_error "init/schema.sql missing! This should be in git."
-exit 1
+    print_error "init/schema.sql missing! This should be in git."
+    exit 1
 fi
 
 print_success "Found init/ directory with SQL schema files"
-===========================================
-Step 2: Verify Configuration Directory
-===========================================
+# ===========================================
+# Step 2: Verify Configuration Directory
+# ===========================================
 
 echo ""
 echo "Step 2: Verifying configuration directory..."
-If coolify/config missing but core/config exists use that. If neither exist, create coolify/config
+# If coolify/config missing but core/config exists use that. If neither exist, create coolify/config
 
 if [ -d "config" ]; then
 print_success "Found config/ directory"
@@ -100,11 +139,11 @@ chmod 755 config
 print_success "Created config/ directory"
 print_warning "You may want to populate config/ from core/config or check repository layout"
 fi
-Note: This deployment does NOT include Prometheus/Grafana
-For monitoring, use the separate coolify-monitoring setup
-===========================================
-Step 3: Create .env File if Missing
-===========================================
+# Note: This deployment does NOT include Prometheus/Grafana
+# For monitoring, use the separate coolify-monitoring setup
+# ===========================================
+# Step 3: Create .env File if Missing
+# ===========================================
 
 echo ""
 echo "Step 3: Checking environment configuration..."
@@ -122,22 +161,22 @@ fi
 else
 print_warning ".env file already exists"
 fi
-Check if .env has placeholder values
+# Check if .env has placeholder values
 
 if [ -f ".env" ]; then
 if grep -q "CHANGE_ME" .env 2>/dev/null; then
 print_warning "⚠️ .env contains CHANGE_ME placeholders!"
 print_warning " You MUST update these before deploying:"
-echo ""
-grep "CHANGE_ME" .env | head -5 || true
-echo ""
+        echo ""
+        grep "CHANGE_ME" .env | head -5 || true
+        echo ""
+    fi
 fi
-fi
-===========================================
-Step 4: Verify Docker Compose File
-===========================================
+# ===========================================
+# Step 4: Verify Docker Compose File
+# ===========================================
 
-echo ""
+echo \"\"
 echo "Step 4: Verifying Docker Compose configuration..."
 
 if [ ! -f "docker-compose.yml" ]; then
@@ -146,13 +185,13 @@ exit 1
 fi
 
 print_success "Found docker-compose.yml"
-===========================================
-Step 5: Verify Setup
-===========================================
+# ===========================================
+# Step 5: Verify Setup
+# ===========================================
 
 echo ""
 echo "Step 5: Final verification..."
-Check if all required files exist
+# Check if all required files exist
 
 REQUIRED_FILES=(
 "docker-compose.yml"
@@ -165,13 +204,13 @@ REQUIRED_FILES=(
 ALL_OK=true
 for file in "${REQUIRED_FILES[@]}"; do
 if [ -f "$file" ]; then
-print_success "Verified $file"
-else
-print_error "Missing $file"
-ALL_OK=false
-fi
+        print_success "Verified $file"
+    else
+        print_error "Missing $file"
+        ALL_OK=false
+    fi
 done
-Check if directories exist (config may be in core/)
+# Check if directories exist (config may be in core/)
 
 REQUIRED_DIRS=(
 "logs"
