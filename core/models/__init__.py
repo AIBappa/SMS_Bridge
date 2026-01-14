@@ -1,4 +1,4 @@
-# SMS Bridge v2.2 Models
+# SMS Bridge v2.3 Models
 from core.models.postgres import (
     Base,
     SettingsHistory,
@@ -7,6 +7,8 @@ from core.models.postgres import (
     BackupUser,
     PowerDownStore,
     BlacklistMobile,
+    MonitoringPortState,
+    MonitoringPortHistory,
 )
 from core.models.schemas import (
     # Settings
@@ -46,6 +48,8 @@ __all__ = [
     "BackupUser",
     "PowerDownStore",
     "BlacklistMobile",
+    "MonitoringPortState",
+    "MonitoringPortHistory",
     # Pydantic schemas - Settings
     "ChecksConfig",
     "SecretsConfig",
