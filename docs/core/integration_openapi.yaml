@@ -311,8 +311,46 @@ paths:
     post:
       summary: Receive webhook from local mobile device for incoming SMS
       description: >-
-        Accepts SMS forwarded from mobile device. Requires API key as query parameter.
-        Example: /sms/receive?apiKey=your-secret-key-123
+        **🔒 LOCALHOST/LAN ONLY** - This endpoint is blocked by HAProxy from external access.
+        
+        
+        **Access Requirements:**
+        
+        - Source IP must be from: localhost (127.0.0.1), Docker networks (172.16.x.x), or private LAN (192.168.x.x, 10.x.x.x)
+        
+        - Your Android device must be on the same local network as the SMS Bridge server
+        
+        - Protected by HAProxy IP whitelist at network layer
+        
+        - Requires API key as query parameter (if sms_receive_api_key configured in settings)
+        
+        
+        **Security Layers:**
+        
+        1. HAProxy blocks external IPs at network layer (returns 403 Forbidden)
+        
+        2. API key validation (if sms_receive_api_key configured)
+        
+        
+        **Example from mobile device on same LAN:**
+        
+        ```bash
+        
+        POST http://192.168.1.100:8080/sms/receive?apiKey=your-secret-key-123
+        
+        Content-Type: application/json
+        
+        
+        {
+          "mobile_number": "+9199XXYYZZAA",
+          "message": "ONBOARD:A3B7K2M9",
+          "received_at": "2025-01-15T12:00:00Z"
+        }
+        
+        ```
+        
+        
+        **Note:** Accessing this endpoint from outside LAN (even via Cloudflare Tunnel) returns 403 Forbidden.
       security:
         - ApiKeyQuery: []
       parameters:
@@ -354,11 +392,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '401':
-          description: Unauthorized
+          description: Unauthorized (invalid or missing API key)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (not from localhost/LAN)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: FORBIDDEN
+                message: Access denied - localhost/LAN only
+                timestamp: '2025-01-15T12:00:00Z'
 
   /outbound/validated-sms:
     post:
@@ -429,8 +477,19 @@ paths:
     post:
       summary: Trigger manual recovery sync to backend
       description: >-
-        Admin endpoint to manually trigger recovery process.
-        Generates HMAC signature and POSTs to recovery_url from settings.
+        **🔒 LOCALHOST/LAN ONLY** - Admin endpoint blocked by HAProxy from external access.
+        
+        
+        Manually triggers recovery process to sync pending data to backend.
+        
+        - Access restricted to: localhost (127.0.0.1), Docker networks (172.16.x.x), or private LAN (192.168.x.x, 10.x.x.x)
+        
+        - Protected by HAProxy IP whitelist + application-level authentication
+        
+        - Generates HMAC signature and POSTs to recovery_url from settings
+        
+        
+        **Note:** All `/admin/*` endpoints are localhost/LAN-only and return 403 Forbidden if accessed from external IPs.
       security:
         - BearerAuth: []
       responses:
@@ -446,6 +505,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (not from localhost/LAN)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: FORBIDDEN
+                message: Access denied - localhost/LAN only
+                timestamp: '2025-01-15T12:00:00Z'
         '502':
           description: Recovery endpoint unreachable
           content:
