@@ -20,6 +20,12 @@ from core.admin.port_management import (
     close_monitoring_port_db,
     get_port_states_db,
     get_port_history_db,
+    get_active_ports,
+    open_monitoring_port,
+    close_monitoring_port,
+    validate_port_config,
+    save_monitoring_config,
+    scan_available_ports,
 )
 
 logger = logging.getLogger(__name__)
@@ -197,12 +203,13 @@ async def port_history_endpoint(
 
 
 @monitoring_router.post("/open-all")
-async def open_all_ports(request: Request, duration_minutes: int = 60):
+async def open_all_ports(request: Request, duration_minutes: int = 60, db: Session = Depends(get_db)):
     """
     Open all enabled monitoring ports at once
     
     Args:
         duration_minutes: How long to keep ports open (15-240 minutes)
+        db: Database session
         
     Returns:
         Results for each service
@@ -223,7 +230,12 @@ async def open_all_ports(request: Request, duration_minutes: int = 60):
     for service, settings in config.items():
         if settings.get("enabled", False):
             try:
-                result = open_monitoring_port(service, duration_minutes, username)
+                result = open_monitoring_port_db(
+                    db=db,
+                    service_name=service,
+                    username=username,
+                    duration_seconds=duration_minutes * 60
+                )
                 results[service] = result
             except Exception as e:
                 results[service] = {"error": str(e)}
@@ -236,10 +248,13 @@ async def open_all_ports(request: Request, duration_minutes: int = 60):
 
 
 @monitoring_router.post("/close-all")
-async def close_all_ports(request: Request):
+async def close_all_ports(request: Request, db: Session = Depends(get_db)):
     """
     Close all open monitoring ports
     
+    Args:
+        db: Database session
+        
     Returns:
         List of closed services
         
@@ -247,13 +262,14 @@ async def close_all_ports(request: Request):
         Quick cleanup after monitoring session
     """
     username = request.session.get("username", "unknown")
-    active = get_active_ports()
+    states = get_port_states_db(db)
+    active = {s["service"]: s for s in states if s.get("is_open")}
     closed = []
     errors = {}
     
     for service in active.keys():
         try:
-            close_monitoring_port(service, username)
+            close_monitoring_port_db(db=db, service_name=service, username=username, reason='manual')
             closed.append(service)
         except Exception as e:
             logger.error(f"Failed to close {service}: {e}")
