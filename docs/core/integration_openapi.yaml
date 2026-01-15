@@ -477,8 +477,19 @@ paths:
     post:
       summary: Trigger manual recovery sync to backend
       description: >-
-        Admin endpoint to manually trigger recovery process.
-        Generates HMAC signature and POSTs to recovery_url from settings.
+        **🔒 LOCALHOST/LAN ONLY** - Admin endpoint blocked by HAProxy from external access.
+        
+        
+        Manually triggers recovery process to sync pending data to backend.
+        
+        - Access restricted to: localhost (127.0.0.1), Docker networks (172.16.x.x), or private LAN (192.168.x.x, 10.x.x.x)
+        
+        - Protected by HAProxy IP whitelist + application-level authentication
+        
+        - Generates HMAC signature and POSTs to recovery_url from settings
+        
+        
+        **Note:** All `/admin/*` endpoints are localhost/LAN-only and return 403 Forbidden if accessed from external IPs.
       security:
         - BearerAuth: []
       responses:
@@ -494,6 +505,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Forbidden (not from localhost/LAN)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: FORBIDDEN
+                message: Access denied - localhost/LAN only
+                timestamp: '2025-01-15T12:00:00Z'
         '502':
           description: Recovery endpoint unreachable
           content:

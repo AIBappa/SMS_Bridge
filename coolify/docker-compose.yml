@@ -81,7 +81,9 @@ services:
       start_period: 10s
 
   haproxy:
-    image: haproxy:2.9-alpine
+    build:
+      context: ./haproxy
+      dockerfile: Dockerfile
     container_name: sms_haproxy
     restart: unless-stopped
     networks:
@@ -99,7 +101,7 @@ services:
           cpus: '0.25'
           memory: 32M
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3

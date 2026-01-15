@@ -520,11 +520,16 @@ def setup_pin(
     response_model=HealthResponse,
     tags=["Health"],
     summary="Health check endpoint",
+    responses={
+        200: {"description": "Service healthy"},
+        503: {"description": "Service degraded or unhealthy"},
+    },
 )
-def health_check() -> HealthResponse:
+def health_check():
     """
     Health check per tech spec Section 4.3.
     Checks database, Redis, and batch processor status.
+    Returns HTTP 200 when healthy, HTTP 503 when degraded or unhealthy.
     """
     # Check database
     db_status = check_db_health()
@@ -547,7 +552,8 @@ def health_check() -> HealthResponse:
     else:
         overall = "healthy"
     
-    return HealthResponse(
+    # Prepare response body
+    response_body = HealthResponse(
         status=overall,
         service=settings.app_name,
         version=settings.version,
@@ -558,6 +564,19 @@ def health_check() -> HealthResponse:
             batch_processor=worker_status,
         ),
     )
+    
+    # Return appropriate HTTP status code
+    if overall == "healthy":
+        return JSONResponse(
+            status_code=200,
+            content=response_body.model_dump(mode='json')
+        )
+    else:
+        # degraded or unhealthy = 503 Service Unavailable
+        return JSONResponse(
+            status_code=503,
+            content=response_body.model_dump(mode='json')
+        )
 
 
 @app.post(
