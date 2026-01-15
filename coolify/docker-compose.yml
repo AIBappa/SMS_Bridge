@@ -80,6 +80,31 @@ services:
       retries: 5
       start_period: 10s
 
+  haproxy:
+    image: haproxy:2.9-alpine
+    container_name: sms_haproxy
+    restart: unless-stopped
+    networks:
+      - sms_bridge_network
+    ports:
+      # ONLY port 8080 exposed externally (HAProxy filters requests)
+      - "${SMS_RECEIVER_PORT:-8080}:8080"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - sms_receiver
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 32M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   redis:
     image: redis:7-alpine
     container_name: sms_redis
@@ -116,9 +141,9 @@ services:
     restart: unless-stopped
     networks:
       - sms_bridge_network
-    ports:
-      # ONLY SMS receiver port exposed (behind Cloudflare)
-      - "${SMS_RECEIVER_PORT:-8080}:8080"
+    expose:
+      # Internal port only - accessed via HAProxy
+      - "8000"
     depends_on:
       pgbouncer:
         condition: service_healthy
