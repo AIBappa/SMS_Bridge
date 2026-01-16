@@ -89,28 +89,29 @@ class AdminAuth(AuthenticationBackend):
         request.session.clear()
         return True
     
-    async def authenticate(self, request: Request) -> Optional[RedirectResponse]:
-        """Check if user is authenticated"""
+    async def authenticate(self, request: Request) -> bool:
+        """
+        Check if user is authenticated.
+        
+        Returns:
+            True if authenticated (allow access)
+            False if not authenticated (SQLAdmin will redirect to login)
+        """
         try:
             session_data = dict(request.session) if hasattr(request, 'session') else {}
             is_authenticated = request.session.get("authenticated", False) if hasattr(request, 'session') else False
             
             logger.info(f"Authenticate check - Path: {request.url.path}, Has session: {hasattr(request, 'session')}, Session data: {session_data}, Authenticated: {is_authenticated}")
             
-            if not is_authenticated:
-                logger.info(f"Not authenticated, redirecting to login from {request.url.path}")
-                return RedirectResponse(
-                    request.url_for("admin:login"),
-                    status_code=302
-                )
-            logger.info(f"Authenticated as: {request.session.get('username')}, returning None to allow access")
-            return None
+            if is_authenticated:
+                logger.info(f"Authenticated as: {request.session.get('username')}, returning True to allow access")
+                return True
+            
+            logger.info(f"Not authenticated, returning False to redirect to login from {request.url.path}")
+            return False
         except Exception as e:
             logger.error(f"Error in authenticate: {e}", exc_info=True)
-            return RedirectResponse(
-                request.url_for("admin:login"),
-                status_code=302
-            )
+            return False
 
 
 # =============================================================================
