@@ -61,8 +61,10 @@ app.add_middleware(
     secret_key=settings.admin_secret_key,
     session_cookie="sms_bridge_session",
     max_age=3600,  # 1 hour
-    same_site="lax",
+    same_site="lax",  # IMPORTANT: "lax" allows cookies in GET redirects
     https_only=False,  # Set to True in production with HTTPS
+    path="/",  # Cookie available for all paths
+    domain=None,  # Don't restrict domain - works for localhost and IP addresses
 )
 
 

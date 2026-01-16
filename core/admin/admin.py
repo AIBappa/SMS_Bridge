@@ -46,13 +46,19 @@ class AdminAuth(AuthenticationBackend):
     Uses admin_users table for credentials.
     """
     
+    def __init__(self, secret_key: str):
+        super().__init__(secret_key)
+    
     async def login(self, request: Request) -> bool:
         """Handle login form submission"""
         form = await request.form()
         username = form.get("username")
         password = form.get("password")
         
+        logger.info(f"Admin login attempt for user: {username}")
+        
         if not username or not password:
+            logger.warning("Login failed: Missing username or password")
             return False
         
         password_truncated = _truncate_password_for_bcrypt(password)
@@ -71,7 +77,10 @@ class AdminAuth(AuthenticationBackend):
                     "authenticated": True,
                     "username": username,
                 })
+                logger.info(f"Login successful for user: {username}, session: {dict(request.session)}")
                 return True
+            else:
+                logger.warning(f"Login failed for user: {username} - Invalid credentials")
         
         return False
     
@@ -82,12 +91,26 @@ class AdminAuth(AuthenticationBackend):
     
     async def authenticate(self, request: Request) -> Optional[RedirectResponse]:
         """Check if user is authenticated"""
-        if not request.session.get("authenticated"):
+        try:
+            session_data = dict(request.session) if hasattr(request, 'session') else {}
+            is_authenticated = request.session.get("authenticated", False) if hasattr(request, 'session') else False
+            
+            logger.info(f"Authenticate check - Path: {request.url.path}, Has session: {hasattr(request, 'session')}, Session data: {session_data}, Authenticated: {is_authenticated}")
+            
+            if not is_authenticated:
+                logger.info(f"Not authenticated, redirecting to login from {request.url.path}")
+                return RedirectResponse(
+                    request.url_for("admin:login"),
+                    status_code=302
+                )
+            logger.info(f"Authenticated as: {request.session.get('username')}, returning None to allow access")
+            return None
+        except Exception as e:
+            logger.error(f"Error in authenticate: {e}", exc_info=True)
             return RedirectResponse(
                 request.url_for("admin:login"),
                 status_code=302
             )
-        return None
 
 
 # =============================================================================
