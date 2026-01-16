@@ -52,6 +52,19 @@ app = FastAPI(
     redoc_url="/redoc" if settings.debug else None,
 )
 
+# Add SessionMiddleware for admin authentication
+# MUST be added before admin UI setup
+from starlette.middleware.sessions import SessionMiddleware
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.admin_secret_key,
+    session_cookie="sms_bridge_session",
+    max_age=3600,  # 1 hour
+    same_site="lax",
+    https_only=False,  # Set to True in production with HTTPS
+)
+
 
 # =============================================================================
 # Security Dependencies
