@@ -887,10 +887,10 @@ Single configuration file, managed via Admin UI, changes effective immediately.
 
 ---
 
-**For implementation details, code examples, and technical configurations, see [SMS_Bridge_tech_snippets_v2.3.md](SMS_Bridge_tech_snippets_v2.3.md)**
+**For implementation details, code examples, and technical configurations, see [SMS_Bridge_tech_snippets_v2.4.md](SMS_Bridge_tech_snippets_v2.4.md)**
 
 ---
 
-*Last updated: January 12, 2026*
-*Version: 2.3*
+*Last updated: January 20, 2026*
+*Version: 2.4*
 *Aligned with: SMS_Bridge_monitoring_spec_v2.3.md*

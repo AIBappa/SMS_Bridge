@@ -1,57 +1,24 @@
 {
-  "version": "2.3.0",
-  "settings": {
-    "rate_limits": {
-      "onboarding_per_minute": 10,
-      "sms_per_minute": 20,
-      "pin_per_minute": 15
-    },
-    "validation_checks": {
-      "header_hash_check": {
-        "enabled": true,
-        "failure_action": "reject"
-      },
-      "foreign_number_check": {
-        "enabled": true,
-        "allowed_country_codes": ["+91"],
-        "failure_action": "reject"
-      },
-      "count_check": {
-        "enabled": true,
-        "max_sms_per_hash_24h": 5,
-        "failure_action": "reject"
-      },
-      "blacklist_check": {
-        "enabled": true,
-        "failure_action": "reject"
-      }
-    },
-    "monitoring_ports": {
-      "default_duration_seconds": 3600,
-      "max_duration_seconds": 86400,
-      "auto_close_enabled": true,
-      "available_services": {
-        "metrics": {
-          "port": 9100,
-          "service": "sms_receiver",
-          "description": "Prometheus metrics endpoint"
-        },
-        "postgres": {
-          "port": 5433,
-          "service": "postgres",
-          "description": "PostgreSQL database access"
-        },
-        "pgbouncer": {
-          "port": 6434,
-          "service": "pgbouncer",
-          "description": "PgBouncer connection pooler"
-        },
-        "redis": {
-          "port": 6380,
-          "service": "redis",
-          "description": "Redis cache access"
-        }
-      }
-    }
+  "version": "2.4.0",
+  "sms_receiver_number": "+919000000000",
+  "allowed_prefix": "ONBOARD:",
+  "hash_length": 8,
+  "ttl_hash_seconds": 900,
+  "sync_interval": 1.0,
+  "log_interval": 120,
+  "count_threshold": 5,
+  "allowed_countries": ["+91", "+44"],
+  "sync_url": "https://your-backend.com/api/validated-users",
+  "recovery_url": "https://your-backend.com/api/recover",
+  "sms_receive_api_key": null,
+  "checks": {
+    "header_hash_check_enabled": true,
+    "foreign_number_check_enabled": true,
+    "count_check_enabled": true,
+    "blacklist_check_enabled": true
+  },
+  "secrets": {
+    "hmac_secret": "CHANGE_ME_IN_PRODUCTION",
+    "hash_key": "CHANGE_ME_IN_PRODUCTION"
   }
 }

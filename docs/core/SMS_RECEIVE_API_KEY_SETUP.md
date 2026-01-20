@@ -1,8 +1,10 @@
 # SMS Receive API Key Setup Guide
 
+**SMS Bridge v2.4**
+
 ## Overview
 
-The `/sms/receive` endpoint now supports query parameter-based API key authentication. This provides a simple way to secure the webhook URL used by mobile SMS forwarding apps.
+The `/sms/receive` endpoint supports query parameter-based API key authentication to secure the webhook URL used by mobile SMS forwarding apps.
 
 ## Configuration
 
@@ -10,7 +12,7 @@ The `/sms/receive` endpoint now supports query parameter-based API key authentic
 
 1. Navigate to Admin UI → **Settings History**
 2. Edit the active settings payload
-3. Add the `sms_receive_api_key` field:
+3. Set the `sms_receive_api_key` field (use a strong random value):
 
 ```json
 {
@@ -22,9 +24,9 @@ The `/sms/receive` endpoint now supports query parameter-based API key authentic
   "log_interval": 120,
   "count_threshold": 5,
   "allowed_countries": ["+91", "+44"],
-  "sync_url": "https://your-backend.com/api/validated-sms",
-  "recovery_url": "https://your-backend.com/api/recovery",
-  "sms_receive_api_key": "your-secure-api-key-123",
+  "sync_url": "https://your-backend.com/api/validated-users",
+  "recovery_url": "https://your-backend.com/api/recover",
+  "sms_receive_api_key": "your-secure-api-key-abc123xyz789",
   "checks": {
     "header_hash_check_enabled": true,
     "foreign_number_check_enabled": true,
@@ -32,10 +34,15 @@ The `/sms/receive` endpoint now supports query parameter-based API key authentic
     "blacklist_check_enabled": true
   },
   "secrets": {
-    "hmac_secret": "your-hmac-secret",
-    "hash_key": "your-hash-key"
+    "hmac_secret": "your-hmac-secret-here",
+    "hash_key": "your-hash-key-here"
   }
 }
+```
+
+**Generate a secure API key:**
+```bash
+openssl rand -hex 32
 ```
 
 4. Save the settings - changes take effect **immediately** via Redis cache
