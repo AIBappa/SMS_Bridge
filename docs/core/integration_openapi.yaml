@@ -201,6 +201,42 @@ components:
         pin: '123456'
         hash: 'A3B7K2M9'
 
+    OutboundRecoveryBatch:
+      type: object
+      description: Batch payload sent to recovery_url when admin triggers manual recovery
+      properties:
+        users:
+          type: array
+          description: List of failed users from sync_queue
+          items:
+            $ref: '#/components/schemas/OutboundValidatedSms'
+        batch_size:
+          type: integer
+          description: Number of users in the batch
+        triggered_at:
+          type: string
+          format: date-time
+          description: UTC timestamp when recovery was triggered
+        triggered_by:
+          type: string
+          description: Who triggered the recovery (always 'admin')
+        signature:
+          type: string
+          description: HMAC-SHA256 signature of the payload (if hmac_secret configured)
+      required: [users, batch_size, triggered_at, triggered_by]
+      example:
+        users:
+          - mobile_number: '+9199XXYYZZAA'
+            pin: '123456'
+            hash: 'A3B7K2M9'
+          - mobile_number: '+9199XXYYZZ11'
+            pin: '654321'
+            hash: 'B4C8L3N0'
+        batch_size: 2
+        triggered_at: '2026-01-21T10:30:00Z'
+        triggered_by: 'admin'
+        signature: 'a1b2c3d4e5f6...'
+
     PinSetupRequest:
       type: object
       properties:
@@ -241,11 +277,12 @@ components:
           format: date-time
         message:
           type: string
-      required: [status]
+          description: Details about recovery operation (includes number of users sent)
+      required: [status, triggered_at, message]
       example:
         status: success
-        triggered_at: '2025-01-15T12:00:00Z'
-        message: Recovery process initiated
+        triggered_at: '2026-01-21T10:30:00Z'
+        message: 'Recovery completed: 15 users sent to recovery endpoint'
 
 paths:
   /onboarding/register:
@@ -439,6 +476,83 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /outbound/recovery:
+    post:
+      summary: Outbound webhook contract for batch recovery
+      description: >-
+        External backend should accept this payload when admin triggers manual recovery.
+        
+        
+        **Endpoint:** recovery_url from settings (configurable - can be same or different backend)
+        
+        **Trigger:** Manual admin action via /admin/trigger-recovery
+        
+        **Frequency:** On-demand only (not automatic)
+        
+        **Purpose:** Bulk resend of failed users after sync_url was temporarily unavailable
+        
+        
+        **Payload includes:**
+        
+        - Array of users that failed automatic sync
+        
+        - Batch size (number of users)
+        
+        - HMAC signature for verification (if hmac_secret configured)
+        
+        
+        **Your backend should:**
+        
+        1. Verify HMAC signature (recommended)
+        
+        2. Process all users in batch transaction
+        
+        3. Return 200 on success (SMS Bridge clears queue)
+        
+        4. Return error on failure (SMS Bridge re-queues users)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutboundRecoveryBatch'
+      responses:
+        '200':
+          description: Batch accepted and processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  processed:
+                    type: integer
+                    description: Number of users successfully processed
+                example:
+                  status: success
+                  processed: 15
+        '400':
+          description: Invalid payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized or invalid signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error (users will be re-queued)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /pin-setup:
     post:
       summary: Submit PIN after mobile verification
@@ -480,13 +594,31 @@ paths:
         **🔒 LOCALHOST/LAN ONLY** - Admin endpoint blocked by HAProxy from external access.
         
         
-        Manually triggers recovery process to sync pending data to backend.
+        Manually triggers recovery process to send all failed users to backend.
+        
+        **What it does:**
+        
+        1. Collects all failed users from sync_queue (users that failed automatic sync)
+        
+        2. Sends them as a batch to recovery_url configured in settings
+        
+        3. Includes HMAC signature for authentication (if hmac_secret configured)
+        
+        4. Returns number of users sent in response message
+        
+        
+        **Access & Security:**
         
         - Access restricted to: localhost (127.0.0.1), Docker networks (172.16.x.x), or private LAN (192.168.x.x, 10.x.x.x)
         
         - Protected by HAProxy IP whitelist + application-level authentication
         
-        - Generates HMAC signature and POSTs to recovery_url from settings
+        - Payload signed with HMAC-SHA256
+        
+        
+        **Empty Queue Handling:**
+        
+        If sync_queue is empty, returns success immediately without making HTTP call.
         
         
         **Note:** All `/admin/*` endpoints are localhost/LAN-only and return 403 Forbidden if accessed from external IPs.

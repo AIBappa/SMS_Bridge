@@ -21,6 +21,8 @@ from core.models import (
     BackupUser,
     PowerDownStore,
     BlacklistMobile,
+    MonitoringPortState,
+    MonitoringPortHistory,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,6 +252,65 @@ class BlacklistMobileAdmin(ModelView, model=BlacklistMobile):
     can_delete = True
 
 
+class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
+    """Admin view for Monitoring Port States"""
+    name = "Port State"
+    name_plural = "Monitoring Port States"
+    icon = "fa-solid fa-network-wired"
+    
+    column_list = [
+        MonitoringPortState.id,
+        MonitoringPortState.service_name,
+        MonitoringPortState.port,
+        MonitoringPortState.is_open,
+        MonitoringPortState.opened_at,
+        MonitoringPortState.scheduled_close_at,
+        MonitoringPortState.opened_by,
+    ]
+    
+    column_searchable_list = [MonitoringPortState.service_name, MonitoringPortState.opened_by]
+    column_sortable_list = [
+        MonitoringPortState.id,
+        MonitoringPortState.service_name,
+        MonitoringPortState.opened_at,
+        MonitoringPortState.scheduled_close_at,
+    ]
+    column_default_sort = [(MonitoringPortState.opened_at, True)]
+    
+    can_create = False  # Ports are opened via API/Admin tools
+    can_edit = False
+    can_delete = True  # Allow cleanup
+
+
+class MonitoringPortHistoryAdmin(ModelView, model=MonitoringPortHistory):
+    """Admin view for Monitoring Port History (Audit Log)"""
+    name = "Port History Entry"
+    name_plural = "Monitoring Port History"
+    icon = "fa-solid fa-clock-rotate-left"
+    
+    column_list = [
+        MonitoringPortHistory.id,
+        MonitoringPortHistory.service_name,
+        MonitoringPortHistory.port,
+        MonitoringPortHistory.action,
+        MonitoringPortHistory.timestamp,
+        MonitoringPortHistory.action_by,
+        MonitoringPortHistory.reason,
+    ]
+    
+    column_searchable_list = [MonitoringPortHistory.service_name, MonitoringPortHistory.action_by]
+    column_sortable_list = [
+        MonitoringPortHistory.id,
+        MonitoringPortHistory.service_name,
+        MonitoringPortHistory.timestamp,
+    ]
+    column_default_sort = [(MonitoringPortHistory.timestamp, True)]
+    
+    can_create = False  # Audit log is append-only via system
+    can_edit = False
+    can_delete = True  # Allow old log cleanup
+
+
 # =============================================================================
 # Admin Setup Function
 # =============================================================================
@@ -288,11 +349,14 @@ def setup_admin(app: FastAPI) -> Admin:
     admin.add_view(BackupUserAdmin)
     admin.add_view(PowerDownStoreAdmin)
     admin.add_view(AdminUserAdmin)
+    admin.add_view(MonitoringPortStateAdmin)
+    admin.add_view(MonitoringPortHistoryAdmin)
     
     logger.info(f"Admin UI mounted at {settings.admin_path}")
     
-    # Add custom monitoring ports page route
+    # Add custom admin pages
     setup_monitoring_ports_route(app, settings)
+    setup_trigger_recovery_route(app, settings)
     
     return admin
 
@@ -325,6 +389,172 @@ def setup_monitoring_ports_route(app: FastAPI, settings):
         return HTMLResponse(content=html_content)
     
     logger.info("Registered custom route: /admin/monitoring-ports")
+
+
+def setup_trigger_recovery_route(app: FastAPI, settings):
+    """
+    Setup custom route for trigger-recovery admin page with button
+    """
+    from fastapi import Request
+    from fastapi.responses import HTMLResponse
+    from starlette.responses import RedirectResponse
+    
+    @app.get("/admin/trigger-recovery-page", response_class=HTMLResponse)
+    async def trigger_recovery_page(request: Request):
+        """Serve the trigger recovery admin page with button"""
+        # Check if user is authenticated
+        if not request.session.get("authenticated"):
+            return RedirectResponse(url=f"{settings.admin_path}/login")
+        
+        # Simple HTML page with trigger button
+        html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trigger Recovery - SMS Bridge Admin</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .info {
+            background-color: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #d32f2f;
+            color: white;
+            padding: 15px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #b71c1c;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #2196F3;
+            text-decoration: none;
+        }
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 Manual Recovery Trigger</h1>
+        
+        <div class="info">
+            <strong>ℹ️ What this does:</strong><br>
+            Collects all failed users from the sync_queue and sends them as a batch to your recovery_url endpoint.
+            Use this when automatic sync has failed and you want to manually resend all pending users.
+        </div>
+        
+        <div class="warning">
+            <strong>⚠️ Warning:</strong><br>
+            This will send ALL users currently in the sync_queue to your recovery endpoint.
+            Make sure your backend's recovery endpoint is available and ready to process the batch.
+        </div>
+        
+        <button id="triggerBtn" onclick="triggerRecovery()">
+            🚀 Trigger Recovery Now
+        </button>
+        
+        <div id="result" class="result"></div>
+        
+        <a href="/admin" class="back-link">← Back to Admin Dashboard</a>
+    </div>
+    
+    <script>
+        async function triggerRecovery() {
+            const btn = document.getElementById('triggerBtn');
+            const result = document.getElementById('result');
+            
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing...';
+            result.style.display = 'none';
+            
+            try {
+                const response = await fetch('/admin/trigger-recovery', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.className = 'result success';
+                    result.innerHTML = `<strong>✅ Success!</strong><br>${data.message}`;
+                } else {
+                    result.className = 'result error';
+                    result.innerHTML = `<strong>❌ Error!</strong><br>${data.detail || data.message}`;
+                }
+                result.style.display = 'block';
+            } catch (error) {
+                result.className = 'result error';
+                result.innerHTML = `<strong>❌ Error!</strong><br>Failed to connect to recovery endpoint: ${error.message}`;
+                result.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🚀 Trigger Recovery Now';
+            }
+        }
+    </script>
+</body>
+</html>
+        """
+        
+        return HTMLResponse(content=html_content)
+    
+    logger.info("Registered custom route: /admin/trigger-recovery-page")
 
 
 # =============================================================================

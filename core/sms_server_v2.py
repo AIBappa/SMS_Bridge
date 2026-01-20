@@ -2,6 +2,7 @@
 SMS Bridge v2.3 - Main FastAPI Application
 API endpoints per tech spec Section 4.
 """
+import json
 import logging
 import secrets
 import uuid
@@ -603,7 +604,7 @@ def health_check():
 def trigger_recovery(db: Session = Depends(get_db)) -> TriggerRecoveryResponse:
     """
     Trigger recovery process per tech spec Section 4.5.
-    Makes POST request to recovery_url.
+    Collects all failed users from sync_queue and sends to recovery_url as batch.
     """
     import httpx
     
@@ -623,11 +624,65 @@ def trigger_recovery(db: Session = Depends(get_db)) -> TriggerRecoveryResponse:
     
     triggered_at = datetime.utcnow()
     
+    # Collect all failed users from sync_queue
+    failed_users = []
+    queue_length = redis_client.llen_sync_queue()
+    
+    if queue_length == 0:
+        return TriggerRecoveryResponse(
+            status="success",
+            triggered_at=triggered_at,
+            message="No failed users to recover (sync_queue is empty)",
+        )
+    
+    # Pop all items from queue
+    while True:
+        item = redis_client.rpop_sync_queue()
+        if item is None:
+            break
+        failed_users.append(item)
+    
+    if not failed_users:
+        return TriggerRecoveryResponse(
+            status="success",
+            triggered_at=triggered_at,
+            message="No failed users to recover",
+        )
+    
+    # Prepare batch payload
+    hmac_secret = config.get("secrets", {}).get("hmac_secret")
+    payload = {
+        "users": failed_users,
+        "batch_size": len(failed_users),
+        "triggered_at": triggered_at.isoformat(),
+        "triggered_by": "admin"
+    }
+    
+    # Sign the payload if hmac_secret is configured
+    if hmac_secret:
+        import hmac
+        import hashlib
+        payload_str = json.dumps(payload, sort_keys=True)
+        signature = hmac.new(
+            hmac_secret.encode(),
+            payload_str.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        payload["signature"] = signature
+    
+    # Send to recovery_url
     try:
         with httpx.Client(timeout=30.0) as client:
-            response = client.post(recovery_url)
+            response = client.post(recovery_url, json=payload)
             response.raise_for_status()
+            
+        logger.info(f"Recovery sent {len(failed_users)} users to {recovery_url}")
+        
     except httpx.HTTPError as e:
+        # On failure, put users back in queue
+        for user in reversed(failed_users):  # Reverse to maintain order
+            redis_client.lpush_sync_queue(user)
+        
         logger.error(f"Recovery trigger failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -637,12 +692,14 @@ def trigger_recovery(db: Session = Depends(get_db)) -> TriggerRecoveryResponse:
     # Log audit event
     redis_client.lpush_audit_event("RECOVERY_TRIGGERED", {
         "triggered_at": triggered_at.isoformat(),
+        "users_sent": len(failed_users),
+        "recovery_url": recovery_url,
     })
     
     return TriggerRecoveryResponse(
         status="success",
         triggered_at=triggered_at,
-        message="Recovery process initiated",
+        message=f"Recovery completed: {len(failed_users)} users sent to recovery endpoint",
     )
 
 
