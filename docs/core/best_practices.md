@@ -136,6 +136,17 @@ SMS_BRIDGE_ADMIN_PASSWORD=YourSecurePassword123
 docker-compose up -d
 ```
 
+# To ensure that docker-compose allows building again if code changes.
+If python build is required or haproxy build required based on code changes,
+ensure existing docker-compose containers are stopped. Then build the containers again without any cache impacting the build.
+
+docker-compose down -v (Stop containers and remove volume)
+
+docker-compose build --no-cache
+
+docker-compose up -d
+
+
 The admin user will be created automatically on first startup if the credentials are set in `.env` and the user doesn't already exist.
 
 #### Database Initialization
