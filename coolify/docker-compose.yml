@@ -154,6 +154,7 @@ services:
     volumes:
       - ./logs:/app/logs:rw
       - ../core/config/sms_settings.json:/app/config/sms_settings.json:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       # Database (via PgBouncer)
       SMS_BRIDGE_DATABASE__HOST: pgbouncer
@@ -183,6 +184,6 @@ services:
     # Required for iptables management (port opening)
     cap_add:
       - NET_ADMIN
-    # Run as root to allow iptables commands (port management)
+      - NET_RAW
     # Security: Only admin users can trigger port opening via authenticated Admin UI
     privileged: false
