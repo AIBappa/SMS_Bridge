@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
-from sqladmin import Admin, ModelView, BaseView, expose
+from sqladmin import Admin, ModelView, BaseView, expose, action
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, HTMLResponse
+from markupsafe import Markup
 from passlib.context import CryptContext
 
 from core.config import get_settings
@@ -254,7 +255,7 @@ class BlacklistMobileAdmin(ModelView, model=BlacklistMobile):
 
 
 class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
-    """Admin view for Monitoring Port States"""
+    """Admin view for Monitoring Port States with Open Port button"""
     name = "Port State"
     name_plural = "Monitoring Port States"
     icon = "fa-solid fa-network-wired"
@@ -281,6 +282,88 @@ class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
     can_create = False  # Ports are opened via API/Admin tools
     can_edit = False
     can_delete = True  # Allow cleanup
+    
+    @action(
+        name="open_port",
+        label="Open Port",
+        confirmation_message="Open this monitoring port for 1 hour?",
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def open_port_action(self, request: Request):
+        """Open the selected monitoring port(s) for external access"""
+        from core.database import get_db_context
+        from core.admin.port_management import open_monitoring_port_db
+        
+        pks = request.query_params.get("pks", "").split(",")
+        username = request.session.get("username", "admin")
+        
+        if pks and pks[0]:
+            with get_db_context() as db:
+                for pk in pks:
+                    try:
+                        # Get the port state record
+                        port_state = db.query(MonitoringPortState).filter(
+                            MonitoringPortState.id == int(pk)
+                        ).first()
+                        
+                        if port_state:
+                            # Open the port using the service name
+                            open_monitoring_port_db(
+                                db=db,
+                                service_name=port_state.service_name,
+                                username=username,
+                                duration_seconds=3600  # 1 hour default
+                            )
+                            logger.info(f"Port opened for service: {port_state.service_name} by {username}")
+                    except Exception as e:
+                        logger.error(f"Failed to open port {pk}: {e}")
+        
+        referer = request.headers.get("Referer")
+        if referer:
+            return RedirectResponse(referer)
+        return RedirectResponse(request.url_for("admin:list", identity=self.identity))
+    
+    @action(
+        name="close_port",
+        label="Close Port",
+        confirmation_message="Close this monitoring port?",
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def close_port_action(self, request: Request):
+        """Close the selected monitoring port(s)"""
+        from core.database import get_db_context
+        from core.admin.port_management import close_monitoring_port_db
+        
+        pks = request.query_params.get("pks", "").split(",")
+        username = request.session.get("username", "admin")
+        
+        if pks and pks[0]:
+            with get_db_context() as db:
+                for pk in pks:
+                    try:
+                        # Get the port state record
+                        port_state = db.query(MonitoringPortState).filter(
+                            MonitoringPortState.id == int(pk)
+                        ).first()
+                        
+                        if port_state and port_state.is_open:
+                            # Close the port using the service name
+                            close_monitoring_port_db(
+                                db=db,
+                                service_name=port_state.service_name,
+                                username=username,
+                                reason='manual'
+                            )
+                            logger.info(f"Port closed for service: {port_state.service_name} by {username}")
+                    except Exception as e:
+                        logger.error(f"Failed to close port {pk}: {e}")
+        
+        referer = request.headers.get("Referer")
+        if referer:
+            return RedirectResponse(referer)
+        return RedirectResponse(request.url_for("admin:list", identity=self.identity))
 
 
 class MonitoringPortHistoryAdmin(ModelView, model=MonitoringPortHistory):
@@ -315,29 +398,6 @@ class MonitoringPortHistoryAdmin(ModelView, model=MonitoringPortHistory):
 # =============================================================================
 # Custom Admin Views (BaseView) - Tools with Buttons
 # =============================================================================
-
-class MonitoringPortsView(BaseView):
-    """
-    Custom admin view for managing monitoring ports.
-    Provides UI buttons to open/close Redis and Postgres monitoring ports.
-    """
-    name = "Open Monitoring Ports"
-    icon = "fa-solid fa-plug"
-    category = "Tools"
-    
-    @expose("/monitoring-ports", methods=["GET"])
-    async def monitoring_ports_page(self, request: Request):
-        """Serve the monitoring ports management page"""
-        template_path = Path(__file__).parent.parent / "templates" / "monitoring_ports.html"
-        
-        if not template_path.exists():
-            return HTMLResponse("<h1>Monitoring Ports page not found</h1>", status_code=404)
-        
-        with open(template_path, 'r') as f:
-            html_content = f.read()
-        
-        return HTMLResponse(content=html_content)
-
 
 class TriggerRecoveryView(BaseView):
     """
@@ -537,15 +597,14 @@ def setup_admin(app: FastAPI) -> Admin:
     admin.add_view(BackupUserAdmin)
     admin.add_view(PowerDownStoreAdmin)
     admin.add_view(AdminUserAdmin)
-    admin.add_view(MonitoringPortStateAdmin)
+    admin.add_view(MonitoringPortStateAdmin)  # Has Open/Close Port action buttons
     admin.add_view(MonitoringPortHistoryAdmin)
     
     # Register custom views (Tools with buttons)
-    admin.add_view(MonitoringPortsView)
     admin.add_view(TriggerRecoveryView)
     
     logger.info(f"Admin UI mounted at {settings.admin_path}")
-    logger.info("Admin Tools registered: 'Open Monitoring Ports', 'Trigger Recovery'")
+    logger.info("Admin Tools registered: 'Trigger Recovery'")
     
     return admin
 
