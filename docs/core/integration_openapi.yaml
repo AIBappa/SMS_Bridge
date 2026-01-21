@@ -390,13 +390,7 @@ paths:
         **Note:** Accessing this endpoint from outside LAN (even via Cloudflare Tunnel) returns 403 Forbidden.
       security:
         - ApiKeyQuery: []
-      parameters:
-        - name: apiKey
-          in: query
-          required: false
-          schema:
-            type: string
-          description: API key for authentication (required if configured in settings)
+        - {}
       requestBody:
         required: true
         content:
