@@ -69,6 +69,11 @@ app.add_middleware(
 )
 
 
+# Mount static files for admin interface
+from starlette.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="core/static"), name="static")
+
+
 # =============================================================================
 # Security Dependencies
 # =============================================================================

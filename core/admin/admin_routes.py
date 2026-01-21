@@ -35,6 +35,21 @@ monitoring_router = APIRouter(prefix="/admin/monitoring", tags=["monitoring"])
 
 
 # =============================================================================
+# Authentication Dependency
+# =============================================================================
+
+async def require_admin_auth(request: Request):
+    """
+    Dependency to require admin authentication for monitoring routes.
+    Checks if user is authenticated via session (same as SQLAdmin).
+    """
+    is_authenticated = request.session.get("authenticated", False)
+    if not is_authenticated:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return request.session.get("username", "unknown")
+
+
+# =============================================================================
 # Request/Response Models
 # =============================================================================
 
@@ -58,7 +73,7 @@ class PortConfigUpdate(BaseModel):
 # =============================================================================
 
 @monitoring_router.get("/services")
-async def list_monitoring_services(request: Request, db: Session = Depends(get_db)):
+async def list_monitoring_services(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
     List all available monitoring services and their current status from database
     
@@ -86,6 +101,7 @@ async def open_port_endpoint(
     request: Request, 
     service_name: str,
     body: OpenPortRequest,
+    username: str = Depends(require_admin_auth),
     db: Session = Depends(get_db)
 ):
     """
@@ -104,7 +120,7 @@ async def open_port_endpoint(
         - Ports auto-close after expiration
     """
     # Get username from session (set by auth middleware)
-    username = request.session.get("username", "unknown")
+    # username = request.session.get("username", "unknown")
     
     try:
         result = open_monitoring_port_db(
@@ -125,6 +141,7 @@ async def open_port_endpoint(
 async def close_port_endpoint(
     request: Request,
     service_name: str,
+    username: str = Depends(require_admin_auth),
     db: Session = Depends(get_db)
 ):
     """
@@ -156,7 +173,7 @@ async def close_port_endpoint(
 
 
 @monitoring_router.get("/port-states")
-async def port_states_endpoint(request: Request, db: Session = Depends(get_db)):
+async def port_states_endpoint(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
     Get current state of all monitoring ports from database
     
@@ -179,6 +196,7 @@ async def port_history_endpoint(
     request: Request,
     service_name: Optional[str] = None,
     limit: int = 50,
+    username: str = Depends(require_admin_auth),
     db: Session = Depends(get_db)
 ):
     """
@@ -202,8 +220,33 @@ async def port_history_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@monitoring_router.get("/ports")
+async def monitoring_ports_page(request: Request, username: str = Depends(require_admin_auth)):
+    """
+    Serve the monitoring ports management page
+    
+    Returns:
+        HTML page for port management interface
+    """
+    try:
+        # Read the HTML template
+        template_path = Path("/app/core/templates/monitoring_ports.html")
+        if not template_path.exists():
+            # Fallback for development
+            template_path = Path("core/templates/monitoring_ports.html")
+        
+        with open(template_path, 'r') as f:
+            html_content = f.read()
+        
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error(f"Failed to serve monitoring ports page: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load monitoring ports page")
+
+
 @monitoring_router.post("/open-all")
-async def open_all_ports(request: Request, duration_minutes: int = 60, db: Session = Depends(get_db)):
+async def open_all_ports(request: Request, duration_minutes: int = 60, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
     Open all enabled monitoring ports at once
     
@@ -248,7 +291,7 @@ async def open_all_ports(request: Request, duration_minutes: int = 60, db: Sessi
 
 
 @monitoring_router.post("/close-all")
-async def close_all_ports(request: Request, db: Session = Depends(get_db)):
+async def close_all_ports(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
     Close all open monitoring ports
     
@@ -288,7 +331,7 @@ async def close_all_ports(request: Request, db: Session = Depends(get_db)):
 # =============================================================================
 
 @monitoring_router.get("/port-config")
-async def get_port_config(request: Request):
+async def get_port_config(request: Request, username: str = Depends(require_admin_auth)):
     """
     Get current port configuration from sms_settings.json
     
@@ -311,7 +354,7 @@ async def get_port_config(request: Request):
 
 
 @monitoring_router.post("/port-config")
-async def update_port_config(request: Request, body: PortConfigUpdate):
+async def update_port_config(request: Request, body: PortConfigUpdate, username: str = Depends(require_admin_auth)):
     """
     Update port configuration in sms_settings.json
     
@@ -370,7 +413,7 @@ async def update_port_config(request: Request, body: PortConfigUpdate):
 
 
 @monitoring_router.post("/port-config/reset")
-async def reset_port_config(request: Request):
+async def reset_port_config(request: Request, username: str = Depends(require_admin_auth)):
     """
     Reset port configuration to defaults
     
@@ -443,7 +486,8 @@ async def get_available_ports(
     request: Request,
     start: int = 9000,
     end: int = 9999,
-    count: int = 10
+    count: int = 10,
+    username: str = Depends(require_admin_auth)
 ):
     """
     Scan for available ports in specified range
@@ -476,7 +520,7 @@ async def get_available_ports(
 # =============================================================================
 
 @monitoring_router.get("/export-prometheus-config")
-async def export_prometheus_config(request: Request):
+async def export_prometheus_config(request: Request, username: str = Depends(require_admin_auth)):
     """
     Export Prometheus configuration with current ports
     
@@ -544,7 +588,7 @@ scrape_configs:
 # =============================================================================
 
 @monitoring_router.get("/logs/list")
-async def list_logs(request: Request):
+async def list_logs(request: Request, username: str = Depends(require_admin_auth)):
     """
     List available log files
     
@@ -595,7 +639,7 @@ async def list_logs(request: Request):
 
 
 @monitoring_router.get("/logs/download/{service}")
-async def download_logs(request: Request, service: str):
+async def download_logs(request: Request, service: str, username: str = Depends(require_admin_auth)):
     """
     Download logs for a specific service
     
