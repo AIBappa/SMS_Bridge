@@ -3,13 +3,14 @@ SMS Bridge v2.2 - Admin UI Module
 SQLAdmin setup per tech spec Section 2.
 """
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
-from sqladmin import Admin, ModelView
+from sqladmin import Admin, ModelView, BaseView, expose
 from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, HTMLResponse
 from passlib.context import CryptContext
 
 from core.config import get_settings
@@ -312,72 +313,21 @@ class MonitoringPortHistoryAdmin(ModelView, model=MonitoringPortHistory):
 
 
 # =============================================================================
-# Admin Setup Function
+# Custom Admin Views (BaseView) - Tools with Buttons
 # =============================================================================
 
-def setup_admin(app: FastAPI) -> Admin:
+class MonitoringPortsView(BaseView):
     """
-    Setup SQLAdmin with all model views.
-    
-    Args:
-        app: FastAPI application instance
-    
-    Returns:
-        Admin instance
+    Custom admin view for managing monitoring ports.
+    Provides UI buttons to open/close Redis and Postgres monitoring ports.
     """
-    settings = get_settings()
+    name = "Open Monitoring Ports"
+    icon = "fa-solid fa-plug"
+    category = "Tools"
     
-    # Validate admin secret key
-    if not settings.admin_secret_key:
-        raise ValueError(
-            "Admin secret key not configured. Set SMS_BRIDGE_ADMIN_SECRET_KEY environment variable."
-        )
-    
-    # Create admin with authentication
-    admin = Admin(
-        app,
-        engine=get_engine(),
-        title="SMS Bridge Admin",
-        base_url=settings.admin_path,
-        authentication_backend=AdminAuth(secret_key=settings.admin_secret_key),
-    )
-    
-    # Register model views
-    admin.add_view(SettingsHistoryAdmin)
-    admin.add_view(SMSBridgeLogAdmin)
-    admin.add_view(BlacklistMobileAdmin)
-    admin.add_view(BackupUserAdmin)
-    admin.add_view(PowerDownStoreAdmin)
-    admin.add_view(AdminUserAdmin)
-    admin.add_view(MonitoringPortStateAdmin)
-    admin.add_view(MonitoringPortHistoryAdmin)
-    
-    logger.info(f"Admin UI mounted at {settings.admin_path}")
-    
-    # Add custom admin pages
-    setup_monitoring_ports_route(app, settings)
-    setup_trigger_recovery_route(app, settings)
-    
-    return admin
-
-
-def setup_monitoring_ports_route(app: FastAPI, settings):
-    """
-    Setup custom route for monitoring ports management page
-    """
-    from fastapi import Request
-    from fastapi.responses import HTMLResponse
-    from starlette.responses import RedirectResponse
-    from pathlib import Path
-    
-    @app.get("/admin/monitoring-ports", response_class=HTMLResponse)
-    async def monitoring_ports_page(request: Request):
+    @expose("/monitoring-ports", methods=["GET"])
+    async def monitoring_ports_page(self, request: Request):
         """Serve the monitoring ports management page"""
-        # Check if user is authenticated
-        if not request.session.get("authenticated"):
-            return RedirectResponse(url=f"{settings.admin_path}/login")
-        
-        # Read and serve the HTML template
         template_path = Path(__file__).parent.parent / "templates" / "monitoring_ports.html"
         
         if not template_path.exists():
@@ -387,26 +337,20 @@ def setup_monitoring_ports_route(app: FastAPI, settings):
             html_content = f.read()
         
         return HTMLResponse(content=html_content)
-    
-    logger.info("Registered custom route: /admin/monitoring-ports")
 
 
-def setup_trigger_recovery_route(app: FastAPI, settings):
+class TriggerRecoveryView(BaseView):
     """
-    Setup custom route for trigger-recovery admin page with button
+    Custom admin view for triggering recovery process.
+    Provides UI button to send batch of verified mobiles to recovery_url.
     """
-    from fastapi import Request
-    from fastapi.responses import HTMLResponse
-    from starlette.responses import RedirectResponse
+    name = "Trigger Recovery"
+    icon = "fa-solid fa-rotate"
+    category = "Tools"
     
-    @app.get("/admin/trigger-recovery-page", response_class=HTMLResponse)
-    async def trigger_recovery_page(request: Request):
+    @expose("/trigger-recovery", methods=["GET"])
+    async def trigger_recovery_page(self, request: Request):
         """Serve the trigger recovery admin page with button"""
-        # Check if user is authenticated
-        if not request.session.get("authenticated"):
-            return RedirectResponse(url=f"{settings.admin_path}/login")
-        
-        # Simple HTML page with trigger button
         html_content = """
 <!DOCTYPE html>
 <html>
@@ -553,8 +497,57 @@ def setup_trigger_recovery_route(app: FastAPI, settings):
         """
         
         return HTMLResponse(content=html_content)
+
+
+# =============================================================================
+# Admin Setup Function
+# =============================================================================
+
+def setup_admin(app: FastAPI) -> Admin:
+    """
+    Setup SQLAdmin with all model views.
     
-    logger.info("Registered custom route: /admin/trigger-recovery-page")
+    Args:
+        app: FastAPI application instance
+    
+    Returns:
+        Admin instance
+    """
+    settings = get_settings()
+    
+    # Validate admin secret key
+    if not settings.admin_secret_key:
+        raise ValueError(
+            "Admin secret key not configured. Set SMS_BRIDGE_ADMIN_SECRET_KEY environment variable."
+        )
+    
+    # Create admin with authentication
+    admin = Admin(
+        app,
+        engine=get_engine(),
+        title="SMS Bridge Admin",
+        base_url=settings.admin_path,
+        authentication_backend=AdminAuth(secret_key=settings.admin_secret_key),
+    )
+    
+    # Register model views (Data Management)
+    admin.add_view(SettingsHistoryAdmin)
+    admin.add_view(SMSBridgeLogAdmin)
+    admin.add_view(BlacklistMobileAdmin)
+    admin.add_view(BackupUserAdmin)
+    admin.add_view(PowerDownStoreAdmin)
+    admin.add_view(AdminUserAdmin)
+    admin.add_view(MonitoringPortStateAdmin)
+    admin.add_view(MonitoringPortHistoryAdmin)
+    
+    # Register custom views (Tools with buttons)
+    admin.add_view(MonitoringPortsView)
+    admin.add_view(TriggerRecoveryView)
+    
+    logger.info(f"Admin UI mounted at {settings.admin_path}")
+    logger.info("Admin Tools registered: 'Open Monitoring Ports', 'Trigger Recovery'")
+    
+    return admin
 
 
 # =============================================================================
