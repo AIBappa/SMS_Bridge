@@ -10,6 +10,7 @@ networks:
 volumes:
   pg_data:
   redis_data:
+  haproxy_socket:
 
 services:
   # ===========================================
@@ -89,19 +90,27 @@ services:
     networks:
       - sms_bridge_network
     ports:
-      # ONLY port 8080 exposed externally (HAProxy filters requests)
+      # Main HTTP interface
       - "${SMS_RECEIVER_PORT:-8080}:8080"
+      # Monitoring ports (PostgreSQL: 9090, Redis: 9091)
+      - "${POSTGRES_MONITOR_PORT:-9090}:9090"
+      - "${REDIS_MONITOR_PORT:-9091}:9091"
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - haproxy_socket:/var/run/haproxy
     depends_on:
-      - sms_receiver
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
           cpus: '0.25'
-          memory: 32M
+          memory: 64M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      # Just check HAProxy is listening - backend health is checked separately
+      test: ["CMD-SHELL", "echo 'show info' | nc localhost 9999 | grep -q 'Uptime'"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -151,10 +160,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      haproxy:
+        condition: service_started
     volumes:
       - ./logs:/app/logs:rw
       - ../core/config/sms_settings.json:/app/config/sms_settings.json:rw
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       # Database (via PgBouncer)
       SMS_BRIDGE_DATABASE__HOST: pgbouncer
@@ -170,8 +180,14 @@ services:
       SMS_BRIDGE_ADMIN_USERNAME: ${SMS_BRIDGE_ADMIN_USERNAME:-admin}
       SMS_BRIDGE_ADMIN_PASSWORD: ${SMS_BRIDGE_ADMIN_PASSWORD}
       SMS_BRIDGE_ADMIN_SECRET_KEY: ${SMS_BRIDGE_ADMIN_SECRET_KEY}
-      # Server configuration (for port management)
+      # HAProxy stats socket for monitoring port control
+      HAPROXY_STATS_HOST: sms_haproxy
+      HAPROXY_STATS_PORT: "9999"
+      # Server configuration (for connection info display)
       SERVER_IP: ${SERVER_IP:-auto}
+      # Monitoring ports (for connection info display)
+      POSTGRES_MONITOR_PORT: ${POSTGRES_MONITOR_PORT:-9090}
+      REDIS_MONITOR_PORT: ${REDIS_MONITOR_PORT:-9091}
       # Logging (minimal - WARNING level)
       LOG_LEVEL: ${LOG_LEVEL:-WARNING}
       LOG_DIR: /app/logs
@@ -181,9 +197,5 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    # Required for iptables management (port opening)
-    cap_add:
-      - NET_ADMIN
-      - NET_RAW
-    # Security: Only admin users can trigger port opening via authenticated Admin UI
+    # No special capabilities needed - uses HAProxy stats socket for port control
     privileged: false

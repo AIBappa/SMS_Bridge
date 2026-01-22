@@ -1,6 +1,6 @@
 """
 SMS Bridge v2.3 - Admin Routes for Monitoring
-API endpoints for database-backed port management and monitoring configuration
+API endpoints for HAProxy-based port management and monitoring configuration
 """
 import logging
 import os
@@ -14,18 +14,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from core.database import get_db
-from core.admin.port_management import (
-    load_monitoring_config,
-    open_monitoring_port_db,
-    close_monitoring_port_db,
-    get_port_states_db,
-    get_port_history_db,
-    get_active_ports,
+from core.admin.haproxy_port_management import (
     open_monitoring_port,
     close_monitoring_port,
-    validate_port_config,
-    save_monitoring_config,
-    scan_available_ports,
+    get_port_states,
+    get_port_history,
+    get_available_services,
+    get_all_monitoring_states,
+    get_server_ip,
+    HAPROXY_BACKENDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,16 +72,16 @@ class PortConfigUpdate(BaseModel):
 @monitoring_router.get("/services")
 async def list_monitoring_services(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
-    List all available monitoring services and their current status from database
+    List all available monitoring services and their current status.
     
     Returns:
-        - Service configuration from sms_settings.json
-        - Current state from database
+        - Available services configuration
+        - Current state from database and HAProxy
         - Time remaining for each active port
     """
     try:
-        config = load_monitoring_config()
-        states = get_port_states_db(db)
+        config = get_available_services()
+        states = get_port_states(db)
         
         return {
             "config": config,
@@ -105,10 +102,10 @@ async def open_port_endpoint(
     db: Session = Depends(get_db)
 ):
     """
-    Open a monitoring port for external access
+    Enable a monitoring port via HAProxy for external access.
     
     Args:
-        service_name: Service name (metrics, postgres, redis, pgbouncer)
+        service_name: Service name (postgres, redis)
         duration_seconds: How long to keep port open (900-86400 seconds / 15min-24h)
     
     Returns:
@@ -119,11 +116,8 @@ async def open_port_endpoint(
         - All actions logged with username and timestamp
         - Ports auto-close after expiration
     """
-    # Get username from session (set by auth middleware)
-    # username = request.session.get("username", "unknown")
-    
     try:
-        result = open_monitoring_port_db(
+        result = open_monitoring_port(
             db=db,
             service_name=service_name,
             username=username,
@@ -132,6 +126,9 @@ async def open_port_endpoint(
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ConnectionError as e:
+        logger.error(f"HAProxy connection failed: {e}")
+        raise HTTPException(status_code=503, detail=f"HAProxy unavailable: {e}")
     except Exception as e:
         logger.error(f"Failed to open port: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -145,7 +142,7 @@ async def close_port_endpoint(
     db: Session = Depends(get_db)
 ):
     """
-    Close an open monitoring port
+    Disable an open monitoring port via HAProxy.
     
     Args:
         service_name: Service name to close
@@ -157,16 +154,19 @@ async def close_port_endpoint(
         - Only authenticated admin users can close ports
         - All actions logged
     """
-    username = request.session.get("username", "unknown")
-    
     try:
-        result = close_monitoring_port_db(
+        result = close_monitoring_port(
             db=db,
             service_name=service_name,
             username=username,
             reason='manual'
         )
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ConnectionError as e:
+        logger.error(f"HAProxy connection failed: {e}")
+        raise HTTPException(status_code=503, detail=f"HAProxy unavailable: {e}")
     except Exception as e:
         logger.error(f"Failed to close port: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -175,13 +175,13 @@ async def close_port_endpoint(
 @monitoring_router.get("/port-states")
 async def port_states_endpoint(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
-    Get current state of all monitoring ports from database
+    Get current state of all monitoring ports from database and HAProxy.
     
     Returns:
         List of all ports with their current state
     """
     try:
-        states = get_port_states_db(db)
+        states = get_port_states(db)
         return {
             "states": states,
             "timestamp": datetime.now().isoformat()
@@ -200,7 +200,7 @@ async def port_history_endpoint(
     db: Session = Depends(get_db)
 ):
     """
-    Get history of port operations from database
+    Get history of port operations from database.
     
     Args:
         service_name: Filter by service (optional)
@@ -210,7 +210,7 @@ async def port_history_endpoint(
         List of historical port operations
     """
     try:
-        history = get_port_history_db(db, service_name, limit)
+        history = get_port_history(db, service_name, limit)
         return {
             "history": history,
             "timestamp": datetime.now().isoformat()
@@ -248,7 +248,7 @@ async def monitoring_ports_page(request: Request, username: str = Depends(requir
 @monitoring_router.post("/open-all")
 async def open_all_ports(request: Request, duration_minutes: int = 60, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
-    Open all enabled monitoring ports at once
+    Enable all monitoring ports via HAProxy at once.
     
     Args:
         duration_minutes: How long to keep ports open (15-240 minutes)
@@ -266,22 +266,19 @@ async def open_all_ports(request: Request, duration_minutes: int = 60, username:
             detail="Duration must be between 15 and 240 minutes"
         )
     
-    username = request.session.get("username", "unknown")
-    config = load_monitoring_config()
     results = {}
     
-    for service, settings in config.items():
-        if settings.get("enabled", False):
-            try:
-                result = open_monitoring_port_db(
-                    db=db,
-                    service_name=service,
-                    username=username,
-                    duration_seconds=duration_minutes * 60
-                )
-                results[service] = result
-            except Exception as e:
-                results[service] = {"error": str(e)}
+    for service_name in HAPROXY_BACKENDS.keys():
+        try:
+            result = open_monitoring_port(
+                db=db,
+                service_name=service_name,
+                username=username,
+                duration_seconds=duration_minutes * 60
+            )
+            results[service_name] = result
+        except Exception as e:
+            results[service_name] = {"error": str(e)}
     
     return {
         "status": "completed",
@@ -293,7 +290,7 @@ async def open_all_ports(request: Request, duration_minutes: int = 60, username:
 @monitoring_router.post("/close-all")
 async def close_all_ports(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
-    Close all open monitoring ports
+    Disable all open monitoring ports via HAProxy.
     
     Args:
         db: Database session
@@ -304,19 +301,18 @@ async def close_all_ports(request: Request, username: str = Depends(require_admi
     Use case:
         Quick cleanup after monitoring session
     """
-    username = request.session.get("username", "unknown")
-    states = get_port_states_db(db)
-    active = {s["service"]: s for s in states if s.get("is_open")}
+    states = get_port_states(db)
+    active = {s["service_name"]: s for s in states if s.get("is_open")}
     closed = []
     errors = {}
     
-    for service in active.keys():
+    for service_name in active.keys():
         try:
-            close_monitoring_port_db(db=db, service_name=service, username=username, reason='manual')
-            closed.append(service)
+            close_monitoring_port(db=db, service_name=service_name, username=username, reason='manual')
+            closed.append(service_name)
         except Exception as e:
-            logger.error(f"Failed to close {service}: {e}")
-            errors[service] = str(e)
+            logger.error(f"Failed to close {service_name}: {e}")
+            errors[service_name] = str(e)
     
     return {
         "status": "completed",
@@ -331,21 +327,22 @@ async def close_all_ports(request: Request, username: str = Depends(require_admi
 # =============================================================================
 
 @monitoring_router.get("/port-config")
-async def get_port_config(request: Request, username: str = Depends(require_admin_auth)):
+async def get_port_config(request: Request, username: str = Depends(require_admin_auth), db: Session = Depends(get_db)):
     """
-    Get current port configuration from sms_settings.json
+    Get current port configuration.
     
     Returns:
-        Complete monitoring port configuration
+        Available services and current states
     """
     try:
-        config = load_monitoring_config()
-        active = get_active_ports()
+        config = get_available_services()
+        states = get_port_states(db)
+        active = [s["service_name"] for s in states if s.get("is_open")]
         
         return {
             "current_config": config,
-            "active_ports": list(active.keys()),
-            "version": "2.3.0",
+            "active_ports": active,
+            "version": "2.4.0",
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -353,165 +350,27 @@ async def get_port_config(request: Request, username: str = Depends(require_admi
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@monitoring_router.post("/port-config")
-async def update_port_config(request: Request, body: PortConfigUpdate, username: str = Depends(require_admin_auth)):
+@monitoring_router.get("/haproxy-status")
+async def haproxy_status(request: Request, username: str = Depends(require_admin_auth)):
     """
-    Update port configuration in sms_settings.json
-    
-    Args:
-        config: Complete monitoring port configuration
-        
-    Returns:
-        Updated configuration
-        
-    Security:
-        - Cannot update while ports are open
-        - Configuration validated before saving
-        - All changes logged
-    """
-    username = request.session.get("username", "unknown")
-    
-    # Check if any ports are currently open
-    active = get_active_ports()
-    if active:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Cannot change port configuration while ports are open",
-                "active_ports": list(active.keys()),
-                "action": "Close all ports first using /admin/monitoring/close-all"
-            }
-        )
-    
-    # Validate configuration
-    is_valid, errors = validate_port_config(body.config)
-    if not is_valid:
-        raise HTTPException(
-            status_code=400,
-            detail={"errors": errors}
-        )
-    
-    try:
-        # Save configuration
-        save_monitoring_config(body.config)
-        
-        # Log change
-        logger.warning(
-            f"SECURITY: Port configuration updated - "
-            f"User: {username}, "
-            f"Timestamp: {datetime.now().isoformat()}"
-        )
-        
-        return {
-            "status": "success",
-            "config": body.config,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Failed to update port config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@monitoring_router.post("/port-config/reset")
-async def reset_port_config(request: Request, username: str = Depends(require_admin_auth)):
-    """
-    Reset port configuration to defaults
+    Get live HAProxy backend status.
     
     Returns:
-        Default configuration
+        Current state of all monitoring backends from HAProxy
         
     Use case:
-        Restore defaults if configuration becomes invalid
+        Debug HAProxy connectivity and verify backend states
     """
-    username = request.session.get("username", "unknown")
-    
-    # Check if any ports are currently open
-    active = get_active_ports()
-    if active:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Cannot reset configuration while ports are open",
-                "active_ports": list(active.keys())
-            }
-        )
-    
-    default_config = {
-        "metrics": {
-            "port": 9100,
-            "service": "sms_receiver",
-            "description": "Prometheus metrics endpoint",
-            "enabled": True
-        },
-        "postgres": {
-            "port": 5433,
-            "service": "postgres",
-            "description": "PostgreSQL database access",
-            "enabled": True
-        },
-        "pgbouncer": {
-            "port": 6434,
-            "service": "pgbouncer",
-            "description": "PgBouncer connection pooler",
-            "enabled": False
-        },
-        "redis": {
-            "port": 6380,
-            "service": "redis",
-            "description": "Redis cache access",
-            "enabled": True
-        }
-    }
-    
     try:
-        save_monitoring_config(default_config)
-        
-        logger.warning(
-            f"SECURITY: Port configuration reset to defaults - "
-            f"User: {username}"
-        )
-        
+        states = get_all_monitoring_states()
         return {
-            "status": "reset",
-            "config": default_config,
+            "haproxy_backends": states,
             "timestamp": datetime.now().isoformat()
         }
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=f"HAProxy unavailable: {e}")
     except Exception as e:
-        logger.error(f"Failed to reset port config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@monitoring_router.get("/port-config/available-ports")
-async def get_available_ports(
-    request: Request,
-    start: int = 9000,
-    end: int = 9999,
-    count: int = 10,
-    username: str = Depends(require_admin_auth)
-):
-    """
-    Scan for available ports in specified range
-    
-    Args:
-        start: Start of port range (default: 9000)
-        end: End of port range (default: 9999)
-        count: Number of ports to return (default: 10)
-        
-    Returns:
-        List of available port numbers
-        
-    Use case:
-        Find available ports when configuring monitoring
-    """
-    try:
-        available = scan_available_ports(start, end, count)
-        return {
-            "available_ports": available,
-            "scanned_range": f"{start}-{end}",
-            "count": len(available)
-        }
-    except Exception as e:
-        logger.error(f"Failed to scan ports: {e}")
+        logger.error(f"Failed to get HAProxy status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -522,32 +381,29 @@ async def get_available_ports(
 @monitoring_router.get("/export-prometheus-config")
 async def export_prometheus_config(request: Request, username: str = Depends(require_admin_auth)):
     """
-    Export Prometheus configuration with current ports
+    Export Prometheus configuration with current ports.
     
     Returns:
         prometheus-remote.yml file with actual server IP and ports
         
     Use case:
         Download this file to your laptop for monitoring setup
-        Save as: coolify-monitoring/config/prometheus-remote.yml
     """
     try:
-        config = load_monitoring_config()
-        server_ip = os.getenv("SERVER_IP", "your-server-ip")
+        server_ip = get_server_ip()
         
-        # Auto-detect server IP if set to "auto"
-        if server_ip == "auto":
-            from core.admin.port_management import get_server_ip
-            server_ip = get_server_ip()
+        postgres_port = HAPROXY_BACKENDS["postgres"]["port"]
+        redis_port = HAPROXY_BACKENDS["redis"]["port"]
         
-        metrics_port = config.get("metrics", {}).get("port", 9100)
-        
-        prometheus_config = f"""# Prometheus Remote Configuration
+        prometheus_config = f"""# SMS Bridge Monitoring Configuration
 # Generated: {datetime.now().isoformat()}
 # Server: {server_ip}
 # 
-# Save this file as: coolify-monitoring/config/prometheus-remote.yml
-# Then start monitoring: ./scripts/start-monitoring.sh
+# Monitoring Ports (HAProxy):
+#   PostgreSQL: {postgres_port}
+#   Redis: {redis_port}
+#
+# Note: Enable ports via Admin UI before connecting
 
 global:
   scrape_interval: 15s
@@ -557,12 +413,12 @@ global:
     environment: 'production'
 
 scrape_configs:
-  # SMS Bridge Application Metrics
-  - job_name: 'sms_receiver'
+  # SMS Bridge Application (via HAProxy main port)
+  - job_name: 'sms_bridge'
     static_configs:
-      - targets: ['{server_ip}:{metrics_port}']
-    metrics_path: '/metrics'
-    scrape_interval: 15s
+      - targets: ['{server_ip}:8080']
+    metrics_path: '/health'
+    scrape_interval: 30s
     scrape_timeout: 10s
 
   # Prometheus Self-Monitoring
