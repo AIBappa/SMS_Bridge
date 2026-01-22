@@ -1,5 +1,5 @@
 """
-SMS Bridge v2.3 - Admin Routes for Monitoring
+SMS Bridge v2.4.0 - Admin Routes for Monitoring
 API endpoints for HAProxy-based port management and monitoring configuration
 """
 import logging
