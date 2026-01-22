@@ -77,7 +77,8 @@ def start_background_tasks(app):
     async def startup_tasks() -> None:
         """Start background tasks on application startup"""
         # Sync HAProxy state with database
-        asyncio.create_task(sync_haproxy_on_startup())
+        task = asyncio.create_task(sync_haproxy_on_startup())
+        _background_tasks.append(task)
         
         # Start auto-close task
         task = asyncio.create_task(auto_close_expired_ports_task())
