@@ -1,5 +1,5 @@
 """
-SMS Bridge v2.3 - Background Tasks
+SMS Bridge v2.4 - Background Tasks
 Periodic tasks for HAProxy-based monitoring port management and system maintenance
 """
 import asyncio
