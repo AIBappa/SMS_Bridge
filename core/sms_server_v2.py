@@ -232,16 +232,20 @@ async def shutdown_event():
     except Exception as e:
         logger.error(f"Error stopping workers: {e}")
     
-    # Close all open monitoring ports (v2.3)
+    # Close all open monitoring ports via HAProxy (v2.4)
     if settings.monitoring_enabled:
         try:
-            from core.admin.port_management import active_port_mappings, close_monitoring_port
-            for service in list(active_port_mappings.keys()):
-                try:
-                    close_monitoring_port(service, "system-shutdown")
-                    logger.info(f"Closed {service} port on shutdown")
-                except Exception as e:
-                    logger.error(f"Failed to close {service} on shutdown: {e}")
+            from core.admin.haproxy_port_management import close_monitoring_port, get_port_states
+            from core.database import get_db_context as get_db_ctx
+            with get_db_ctx() as db:
+                states = get_port_states(db)
+                for state in states:
+                    if state.get("is_open"):
+                        try:
+                            close_monitoring_port(db, state["service_name"], reason="system_shutdown")
+                            logger.info(f"Closed {state['service_name']} port on shutdown")
+                        except Exception as e:
+                            logger.error(f"Failed to close {state['service_name']} on shutdown: {e}")
         except Exception as e:
             logger.error(f"Error closing monitoring ports: {e}")
     

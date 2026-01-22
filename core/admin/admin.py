@@ -291,9 +291,9 @@ class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
         add_in_list=True,
     )
     async def open_port_action(self, request: Request):
-        """Open the selected monitoring port(s) for external access"""
+        """Enable the selected monitoring port(s) via HAProxy"""
         from core.database import get_db_context
-        from core.admin.port_management import open_monitoring_port_db
+        from core.admin.haproxy_port_management import open_monitoring_port
         
         pks = request.query_params.get("pks", "").split(",")
         username = request.session.get("username", "admin")
@@ -308,14 +308,14 @@ class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
                         ).first()
                         
                         if port_state:
-                            # Open the port using the service name
-                            open_monitoring_port_db(
+                            # Enable the port via HAProxy
+                            open_monitoring_port(
                                 db=db,
                                 service_name=port_state.service_name,
                                 username=username,
                                 duration_seconds=3600  # 1 hour default
                             )
-                            logger.info(f"Port opened for service: {port_state.service_name} by {username}")
+                            logger.info(f"Port enabled via HAProxy: {port_state.service_name} by {username}")
                     except Exception as e:
                         logger.error(f"Failed to open port {pk}: {e}")
         
@@ -332,9 +332,9 @@ class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
         add_in_list=True,
     )
     async def close_port_action(self, request: Request):
-        """Close the selected monitoring port(s)"""
+        """Disable the selected monitoring port(s) via HAProxy"""
         from core.database import get_db_context
-        from core.admin.port_management import close_monitoring_port_db
+        from core.admin.haproxy_port_management import close_monitoring_port
         
         pks = request.query_params.get("pks", "").split(",")
         username = request.session.get("username", "admin")
@@ -349,14 +349,14 @@ class MonitoringPortStateAdmin(ModelView, model=MonitoringPortState):
                         ).first()
                         
                         if port_state and port_state.is_open:
-                            # Close the port using the service name
-                            close_monitoring_port_db(
+                            # Disable the port via HAProxy
+                            close_monitoring_port(
                                 db=db,
                                 service_name=port_state.service_name,
                                 username=username,
                                 reason='manual'
                             )
-                            logger.info(f"Port closed for service: {port_state.service_name} by {username}")
+                            logger.info(f"Port disabled via HAProxy: {port_state.service_name} by {username}")
                     except Exception as e:
                         logger.error(f"Failed to close port {pk}: {e}")
         
